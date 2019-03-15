@@ -1,0 +1,12 @@
+# data
+*.csv
+
+# code
+*.ipynb
+.ipynb_checkpoints
+.idea
+*.pyc
+__pycache__
+
+# other
+*.DS_Store

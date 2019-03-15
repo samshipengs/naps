@@ -2,7 +2,7 @@
 *.csv
 
 # code
-*.ipynb
+#*.ipynb
 .ipynb_checkpoints
 .idea
 *.pyc

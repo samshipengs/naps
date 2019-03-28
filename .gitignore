@@ -1,6 +1,9 @@
 # data
+*.h5
 *.csv
+*.log
 
+catboost_info/
 # code
 #*.ipynb
 .ipynb_checkpoints

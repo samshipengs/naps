@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import subprocess
 
 
 def pshape(df):
@@ -44,3 +45,11 @@ def click_rel_pos_avg(x):
 
 def ptp(x):
     return x.max() - x.min()
+
+
+def check_gpu():
+    n = str(subprocess.check_output(["nvidia-smi", "-L"])).count('UUID')
+    if n > 0:
+        return True
+    else:
+        return False

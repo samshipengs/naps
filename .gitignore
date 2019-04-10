@@ -2,6 +2,7 @@
 *.h5
 *.csv
 *.log
+*.npy
 
 catboost_info/
 # code

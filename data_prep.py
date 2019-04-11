@@ -181,12 +181,13 @@ actions_natural = action_type_mapping()
 # ====================================# ====================================# ====================================
 def get_session_item_pairs(args):
     # grab the args
-    gids, session_df, meta_df, data_source = args
+    gids, session_df, data_source = args
     # selecting the assigned session ids and grouping on session level
     grps = (session_df[session_df['session_id'].isin(gids)]
             .reset_index(drop=True)
             .groupby('session_id'))
 
+    meta_df = create_meta_fts(data_source)
     # use apply to compute session level features
     session_compute_func = partial(compute_session_item_pair, meta_df=meta_df, data_source=data_source)
     session_features = grps.apply(session_compute_func)
@@ -194,7 +195,6 @@ def get_session_item_pairs(args):
     return session_features
 
 
-# def compute_session_item_pair(session_df, g_id, buy_df):
 def compute_session_item_pair(session_df, meta_df, data_source):
     sdf = session_df.copy()
     last_row = sdf.iloc[-1]
@@ -278,7 +278,8 @@ def compute_session_item_pair(session_df, meta_df, data_source):
     return result
 
 
-def generate_session_item_pairs(data_source, sessions_df, meta_df, nprocs=None):
+# def generate_session_item_pairs(data_source, sessions_df, meta_df, nprocs=None):
+def generate_session_item_pairs(data_source, sessions_df, nprocs=None):
     t1 = time.time()
     if nprocs is None:
         nprocs = mp.cpu_count() - 1
@@ -286,14 +287,13 @@ def generate_session_item_pairs(data_source, sessions_df, meta_df, nprocs=None):
         print('Using {} cores'.format(nprocs))
 
     sids = sessions_df['session_id'].unique()
-    print(len(sids))
 
     pairs = []
 
     # create iterator to pass in args
     def args_gen():
         for i in range(nprocs):
-            yield (sids[range(i, len(sids), nprocs)], sessions_df, meta_df, data_source)
+            yield (sids[range(i, len(sids), nprocs)], sessions_df, data_source)
 
     # init multiprocessing pool
     pool = mp.Pool(nprocs)
@@ -355,13 +355,18 @@ def genearte_data(data_source='train', nrows=10000):
     # session fts
     fprint('Get session features')
     session_fts = create_session_fts(data_source, df)
+    del session_fts
+    gc.collect()
     # meta fts
     fprint('Get meta features')
     meta = create_meta_fts(data_source)
+    del meta
+    gc.collect()
 
     # session_item pairs
     fprint('Get session item pair')
-    session_items = generate_session_item_pairs(data_source, df, meta, nprocs=None)
+    # session_items = generate_session_item_pairs(data_source, df, meta, nprocs=None)
+    session_items = generate_session_item_pairs(data_source, df, nprocs=None)
     # join
     session_items.reset_index(level='session_id', inplace=True)
     session_items.set_index('session_id', inplace=True)
@@ -373,10 +378,12 @@ def genearte_data(data_source='train', nrows=10000):
     gc.collect()
 
     # final
+    session_fts = create_session_fts(data_source)
     final = session_items.join(session_fts)
 
     del session_fts, session_items
     gc.collect()
+
     # final.to_csv('./data/final.csv')
     if data_source == 'train':
         xtrain = final[final.index.isin(train_sids)]

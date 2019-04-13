@@ -126,7 +126,7 @@ def run_pipeline():
 
     fprint('Start training')
     device = 'GPU' if check_gpu() else 'CPU'
-    params = {'iterations': 50,
+    params = {'iterations': 3000,
               'learning_rate': 0.02,
               'depth': 8,
               'task_type': device}
@@ -135,7 +135,6 @@ def run_pipeline():
     fprint('Make prediction on test set')
     # pred xtest
     test_pred = clf.predict_proba(xtest.values)[:, 1]
-    print('='*20, sum(test_pred))
     xtest['pred'] = test_pred
     item_mapper = np.load('./data/item_id_mapper_reverse.npy').item()
     xtest['item_id'] = xtest['item_id'].map(item_mapper)

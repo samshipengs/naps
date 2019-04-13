@@ -1,8 +1,5 @@
-import pandas as pd
-import numpy as np
 import datetime
 import time 
-import os
 import gc
 import multiprocessing as mp
 from functools import partial
@@ -374,7 +371,8 @@ def genearte_data(data_source='train', nrows=10000):
     # make note of train and val split then remove train
     # split to train and valid
     train_sids = df[df['ts'] <= datetime.datetime(2018, 11, 6)].session_id.unique()
-    del df, meta
+    # del df, meta
+    del df
     gc.collect()
 
     # final

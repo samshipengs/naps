@@ -73,7 +73,7 @@ def check_dir(dirs):
 def plot_imp(data, fold_, plot_n=15):
     check_dir('./imps')
     imp = pd.DataFrame.from_records(data)
-    imp.to_csv(f'./imps_{fold_}.csv', index=False)
+    imp.to_csv(f'./imps/{fold_}.csv', index=False)
     imp.columns = ['features', 'feature_importance']
     imp_des = imp.sort_values(by='feature_importance', ascending=False)
     imp_asc = imp.sort_values(by='feature_importance', ascending=True)

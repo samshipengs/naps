@@ -3,15 +3,26 @@ import pandas as pd
 import subprocess
 import os
 import matplotlib.pyplot as plt
+import warnings
+
+
+def ignore_warnings():
+    warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
+    warnings.filterwarnings('ignore', category=FutureWarning)
+    warnings.filterwarnings('ignore', category=UserWarning)
 
 
 def pshape(df):
     print(f'df len: {df.shape[0]:,}')
 
 
-def load_data(data_soruce, nrows=None, **kwargs):
-    data_path = './data/'
-    return pd.read_csv(data_path+data_soruce+'.csv', nrows=nrows, **kwargs)
+def load_data(data_soruce, data_path='./data/', nrows=None, verbose=False, **kwargs):
+    df = pd.read_csv(data_path+data_soruce+'.csv', nrows=nrows, **kwargs)
+    if verbose:
+        if (nrows is None) and (data_soruce in ['train', 'test']):
+            print('Warning: getting memory usage would take a while (~ 1min)')
+        print(f'Memory usage: {df.memory_usage(deep=True).sum()/1024**2:.2f} mb')
+    return df
 
 
 # some custom funcs used in agggregation

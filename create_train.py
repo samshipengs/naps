@@ -36,7 +36,7 @@ def create_train(data_source, nrows=None):
     items_fts.set_index('session_id', inplace=True)
     train_df = items_fts.join(session_fts)
     fprint('Done all')
-    train_df.to_hdf('train.h5', key='train')
+    train_df.to_hdf('./data/train.h5', key='train')
     fprint(f'Done saving, train shape = {train_df.shape}')
 
 

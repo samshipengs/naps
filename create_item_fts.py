@@ -98,6 +98,9 @@ def compute_session_item_pair(session_df, meta_df, actions_natural, data_source)
         result['n_matches_per'] = result['n_matches'] / len(cfilter)
     else:
         result['n_matches'] = np.nan
+    # we do not need properties in the final output
+    del result['properties']
+
     # reset index
     result.reset_index(inplace=True)
 

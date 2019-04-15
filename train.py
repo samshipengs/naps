@@ -106,18 +106,20 @@ def run_pipeline():
     t_int = time.time()
     fprint = lambda msg: print(f'{msg} {"="*20} time elapsed = {(time.time()-t_int)/60:.2f} mins')
     fprint('Load train data')
-    train = pd.read_hdf('./data/train.h5', 'xtrain')
+    train = pd.read_hdf('./data/train.h5', 'train')
 
     train_val_split = 0.1
     # split out validation from the latest
-    sort_ts = train[['ts', 'session_id']].sort_values(by='ts')
-    trn_sids = sort_ts.iloc[:int(len(train*train_val_split))]
-    val_sids = sort_ts.iloc[-int(len(train*train_val_split)):]
+    sort_ts = train.sort_values(by='ts')['ts']
+    trn_sids = sort_ts.iloc[:int(len(train)*train_val_split)].index
+    val_sids = sort_ts.iloc[-int(len(train)*train_val_split):].index
 
-    val_sids = list(set(val_sids['session_id'].unique()) - set(trn_sids['session_id'].unique()))
-    val_mask = train['session_id'].isin(val_sids)
+    val_sids = list(set(val_sids.unique()) - set(trn_sids.unique()))
+    val_mask = train.index.isin(val_sids)
     xtrain = train[~val_mask]
     xval = train[val_mask]
+    fprint(f'xtrain shape: {xtrain.shape}')
+    fprint(f'xval shape: {xval.shape}')
 
     # fprint('Load test')
     # xtest = pd.read_hdf('./data/test.h5', 'xtest')
@@ -131,13 +133,13 @@ def run_pipeline():
     # reduce_numeric_mem_usage(xval)
     # reduce_numeric_mem_usage(xtest)
 
-    xtrain.set_index('session_id', inplace=True)
-    xval.set_index('session_id', inplace=True)
+    # xtrain.set_index('session_id', inplace=True)
+    # xval.set_index('session_id', inplace=True)
     # xtest.set_index('session_id', inplace=True)
 
     fprint('Start training')
     device = 'GPU' if check_gpu() else 'CPU'
-    params = {'iterations': 3000,
+    params = {'iterations': 300,
               'learning_rate': 0.02,
               'depth': 8,
               'task_type': device}

@@ -106,23 +106,34 @@ def run_pipeline():
     t_int = time.time()
     fprint = lambda msg: print(f'{msg} {"="*20} time elapsed = {(time.time()-t_int)/60:.2f} mins')
     fprint('Load train data')
-    xtrain = pd.read_hdf('./data/train.h5', 'xtrain')
-    xval = pd.read_hdf('./data/train.h5', 'xval')
-    fprint('Load test')
-    xtest = pd.read_hdf('./data/test.h5', 'xtest')
-    fprint('categorizing features')
-    cat_fts = ['city_get_first', 'platform_get_first', 'device_get_first', 'item_id', 'location']
+    train = pd.read_hdf('./data/train.h5', 'xtrain')
 
-    categorize(xtrain, xval, cat_fts, xtest)
+    train_val_split = 0.1
+    # split out validation from the latest
+    sort_ts = train[['ts', 'session_id']].sort_values(by='ts')
+    trn_sids = sort_ts.iloc[:int(len(train*train_val_split))]
+    val_sids = sort_ts.iloc[-int(len(train*train_val_split)):]
 
-    fprint('reducing memory')
-    reduce_numeric_mem_usage(xtrain)
-    reduce_numeric_mem_usage(xval)
-    reduce_numeric_mem_usage(xtest)
+    val_sids = list(set(val_sids['session_id'].unique()) - set(trn_sids['session_id'].unique()))
+    val_mask = train['session_id'].isin(val_sids)
+    xtrain = train[~val_mask]
+    xval = train[val_mask]
+
+    # fprint('Load test')
+    # xtest = pd.read_hdf('./data/test.h5', 'xtest')
+    # fprint('categorizing features')
+    cat_fts = ['city_get_last', 'platform_get_last', 'device_get_last', 'item_id', 'location']
+    #
+    # categorize(xtrain, xval, cat_fts, xtest)
+
+    # fprint('reducing memory')
+    # reduce_numeric_mem_usage(xtrain)
+    # reduce_numeric_mem_usage(xval)
+    # reduce_numeric_mem_usage(xtest)
 
     xtrain.set_index('session_id', inplace=True)
     xval.set_index('session_id', inplace=True)
-    xtest.set_index('session_id', inplace=True)
+    # xtest.set_index('session_id', inplace=True)
 
     fprint('Start training')
     device = 'GPU' if check_gpu() else 'CPU'
@@ -132,23 +143,23 @@ def run_pipeline():
               'task_type': device}
     clf, categorical_ind, mrr = train_model(xtrain, xval, cat_fts, params)
 
-    fprint('Make prediction on test set')
-    # pred xtest
-    test_pred = clf.predict_proba(xtest.values)[:, 1]
-    xtest['pred'] = test_pred
-    item_mapper = np.load('./data/item_id_mapper_reverse.npy').item()
-    xtest['item_id'] = xtest['item_id'].map(item_mapper)
-    test_imps_pred = xtest.groupby(level=0).apply(output_impressions)
-    test_imps_pred = test_imps_pred.reset_index(name='recommendation')
-    test_imps_pred.to_csv('./data/test_imps_pred.csv', index=False)
-    # read sub
-    sub = pd.read_csv('./data/submission_popular.csv')
-    sub = pd.merge(sub, test_imps_pred, how='left', on='session_id')
-    sub.to_csv('./data/sub.csv', index=False)
-
-    sub.drop('item_recommendations', axis=1, inplace=True)
-    sub.rename(columns={'recommendation': 'item_recommendations'}, inplace=True)
-    sub.to_csv(f'./data/sub_mrr_{mrr:.4f}.csv', index=False)
+    # fprint('Make prediction on test set')
+    # # pred xtest
+    # test_pred = clf.predict_proba(xtest.values)[:, 1]
+    # xtest['pred'] = test_pred
+    # item_mapper = np.load('./data/item_id_mapper_reverse.npy').item()
+    # xtest['item_id'] = xtest['item_id'].map(item_mapper)
+    # test_imps_pred = xtest.groupby(level=0).apply(output_impressions)
+    # test_imps_pred = test_imps_pred.reset_index(name='recommendation')
+    # test_imps_pred.to_csv('./data/test_imps_pred.csv', index=False)
+    # # read sub
+    # sub = pd.read_csv('./data/submission_popular.csv')
+    # sub = pd.merge(sub, test_imps_pred, how='left', on='session_id')
+    # sub.to_csv('./data/sub.csv', index=False)
+    #
+    # sub.drop('item_recommendations', axis=1, inplace=True)
+    # sub.rename(columns={'recommendation': 'item_recommendations'}, inplace=True)
+    # sub.to_csv(f'./data/sub_mrr_{mrr:.4f}.csv', index=False)
 
     fprint('DONE')
 

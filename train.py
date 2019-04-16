@@ -108,6 +108,14 @@ def run_pipeline():
     fprint('Load train data')
     train = pd.read_hdf('./data/train.h5', 'train')
 
+    values = {'reference_second_last': -1, 'action_type_second_last': -1}
+    train.fillna(value=values, inplace=True)
+
+    # drop columns
+    # remove_cols = ['ts', 'clickout item_per']
+    # train.drop(remove_cols, axis=1, inplace=True)
+    del train['clickout item_per']
+
     train_val_split = 0.1
     # split out validation from the latest
     sort_ts = train.sort_values(by='ts')['ts']
@@ -118,13 +126,18 @@ def run_pipeline():
     val_mask = train.index.isin(val_sids)
     xtrain = train[~val_mask]
     xval = train[val_mask]
+    del xtrain['ts']
+    del xval['ts']
+
     fprint(f'xtrain shape: {xtrain.shape}')
     fprint(f'xval shape: {xval.shape}')
 
     # fprint('Load test')
     # xtest = pd.read_hdf('./data/test.h5', 'xtest')
     # fprint('categorizing features')
-    cat_fts = ['city_get_last', 'platform_get_last', 'device_get_last', 'item_id', 'location']
+    cat_fts = ['city_get_last', 'platform_get_last', 'device_get_last', 'item_id', 'location',
+               'reference_second_last', 'action_type_second_last']
+
     #
     # categorize(xtrain, xval, cat_fts, xtest)
 
@@ -139,7 +152,7 @@ def run_pipeline():
 
     fprint('Start training')
     device = 'GPU' if check_gpu() else 'CPU'
-    params = {'iterations': 300,
+    params = {'iterations': 1000,
               'learning_rate': 0.02,
               'depth': 8,
               'task_type': device}

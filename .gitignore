@@ -16,3 +16,5 @@ __pycache__
 # other
 *.DS_Store
 geckodriver
+*.model
+logs

@@ -1,23 +1,57 @@
-import numpy as np
+# import numpy as np
 import pandas as pd
 import subprocess
 import os
-import matplotlib.pyplot as plt
+from time import time
+# import matplotlib.pyplot as plt
 import warnings
+import multiprocessing
 
 
 def ignore_warnings():
+    """
+    Ignore warnings
+    """
+    print('WARNING IS BEING DISABLED! INCLUDING: PerformanceWarning, FutureWarning, UserWarning')
     warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
     warnings.filterwarnings('ignore', category=FutureWarning)
     warnings.filterwarnings('ignore', category=UserWarning)
 
 
-def pshape(df):
-    print(f'df len: {df.shape[0]:,}')
+class Fprint:
+    def __init__(self, t_init=None):
+        self.t_init = t_init
+        self.step = 0
+
+    def fprint(self, msg):
+        if self.step == 0:
+            self.t_init = time()
+            print(f'[>>>>>] {msg}')
+        else:
+            print(f'[>>>>>][te={(time()-self.t_init)/60:.2f} mins] {msg}')
+        self.step += 1
+
+
+def pshape(df, name='df'):
+    """
+    Print df shape with , separated
+    :param df:
+    :return:
+    """
+    print(f'[>>>>>] {name} shape: ({df.shape[0]:,}, {df.shape[1]})')
 
 
 def load_data(data_soruce, data_path='./data/', nrows=None, verbose=False, **kwargs):
-    df = pd.read_csv(data_path+data_soruce+'.csv', nrows=nrows, **kwargs)
+    """
+    Load csv files as dataframe
+    :param data_soruce: str, train or test
+    :param data_path: directory path where data sits
+    :param nrows: number of rows to have
+    :param verbose: boolean, print memory usage
+    :param kwargs:
+    :return: dataframe
+    """
+    df = pd.read_csv(os.path.join(data_path, data_soruce) + '.csv', nrows=nrows, **kwargs)
     if verbose:
         if (nrows is None) and (data_soruce in ['train', 'test']):
             print('Warning: getting memory usage would take a while (~ 1min)')
@@ -25,42 +59,11 @@ def load_data(data_soruce, data_path='./data/', nrows=None, verbose=False, **kwa
     return df
 
 
-# some custom funcs used in agggregation
-def mean_dwell_time(x):
-    if len(x) == 1:
-        return np.nan
-    else:
-        return np.mean(np.diff(np.sort(x)))
-
-
-def var_dwell_time(x):
-    if len(x) == 1:
-        return np.nan
-    else:
-        return np.var(np.diff(np.sort(x)))
-
-
-def get_first(x):
-    return x.iloc[0]
-
-
-def get_last(x):
-    return x.iloc[-1]
-
-
-def n_clickouts(x):
-    return (x == 'clickout item').sum()
-
-
-def click_rel_pos_avg(x):
-    return np.mean(np.argwhere((x == 'clickout item'))) / len(x)
-
-
-def ptp(x):
-    return x.max() - x.min()
-
-
 def check_gpu():
+    """
+    Check whether gpu is available or not
+    :return:
+    """
     try:
         n = str(subprocess.check_output(["nvidia-smi", "-L"])).count('UUID')
         if n > 0:
@@ -71,7 +74,19 @@ def check_gpu():
         return False
 
 
+def get_cpu_count(stable=True):
+    ncpu = multiprocessing.cpu_count()
+    if stable:
+        ncpu -= 1
+    print(f'[number of cpu count: {ncpu}]')
+    return ncpu
+
 def check_dir(dirs):
+    """
+    Create a or a list of directories
+    :param dirs:
+    :return:
+    """
     if type(dirs) == list:
         for d in dirs:
             if not os.path.exists(d):
@@ -80,17 +95,17 @@ def check_dir(dirs):
         if not os.path.exists(dirs):
             os.makedirs(dirs)
 
-
-def plot_imp(data, fold_, plot_n=15):
-    check_dir('./imps')
-    imp = pd.DataFrame.from_records(data)
-    imp.to_csv(f'./imps/{fold_}.csv', index=False)
-    imp.columns = ['features', 'feature_importance']
-    imp_des = imp.sort_values(by='feature_importance', ascending=False)
-    imp_asc = imp.sort_values(by='feature_importance', ascending=True)
-
-    fig, axes = plt.subplots(figsize=(8, 8), nrows=2, ncols=1)
-    imp_des[:plot_n].plot(x='features', y='feature_importance', ax=axes[0], kind='barh', grid=True)
-    imp_asc[:plot_n].plot(x='features', y='feature_importance', ax=axes[1], kind='barh', grid=True)
-    plt.tight_layout()
-    fig.savefig('./imps/{}.png'.format(fold_))
+#
+# def plot_imp(data, fold_, plot_n=15):
+#     check_dir('./imps')
+#     imp = pd.DataFrame.from_records(data)
+#     imp.to_csv(f'./imps/{fold_}.csv', index=False)
+#     imp.columns = ['features', 'feature_importance']
+#     imp_des = imp.sort_values(by='feature_importance', ascending=False)
+#     imp_asc = imp.sort_values(by='feature_importance', ascending=True)
+#
+#     fig, axes = plt.subplots(figsize=(8, 8), nrows=2, ncols=1)
+#     imp_des[:plot_n].plot(x='features', y='feature_importance', ax=axes[0], kind='barh', grid=True)
+#     imp_asc[:plot_n].plot(x='features', y='feature_importance', ax=axes[1], kind='barh', grid=True)
+#     plt.tight_layout()
+#     fig.savefig('./imps/{}.png'.format(fold_))

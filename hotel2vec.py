@@ -3,6 +3,7 @@ import os
 import gc
 from gensim.models import Word2Vec
 from utils import ignore_warnings, load_data, Fprint, pshape, get_cpu_count, check_dir
+from clean_session import remove_duplicates
 
 
 def load_train_test(nrows=None):
@@ -10,13 +11,16 @@ def load_train_test(nrows=None):
     fprint = Fprint().fprint
     fprint('Load train data')
     # train
-    train = load_data('train', nrows=nrows, usecols=usecols)
+    train = load_data('train', nrows=nrows)#, usecols=usecols)
     pshape(train, 'train')
+    train = remove_duplicates(train)
+    train = train[usecols]
     # test
     fprint('Load test data')
-    test = load_data('test', nrows=nrows, usecols=usecols)
+    test = load_data('test', nrows=nrows)#, usecols=usecols)
     pshape(train, 'test')
-
+    test = remove_duplicates(test)
+    test = test[usecols]
     # concat
     return pd.concat([train, test], axis=0, ignore_index=True)
 

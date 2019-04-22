@@ -20,7 +20,8 @@ def pipeline(data_source='train', nrows=None):
 
 if __name__ == '__main__':
     data_source = 'train'
-    nrows = 10000
+    # nrows = 10000
+    nrows = None
     pipeline(data_source, nrows=nrows)
 
 

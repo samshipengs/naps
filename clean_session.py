@@ -3,7 +3,6 @@ from functools import partial
 from utils import Fprint
 
 
-
 # 0)
 def remove_duplicates(df):
     # find duplciates except steps

@@ -65,7 +65,11 @@ def dwell_time_prior_clickout_per(ts):
     else:
         sorted_ts = np.sort(ts)
         # assert (sorted_ts[-1] - sorted_ts[0]) != 0, f'should not equal{sorted_ts} | {ts.index}'
-        return (sorted_ts[-1] - sorted_ts[-2]) / (sorted_ts[-1] - sorted_ts[0])
+        duration = sorted_ts[-1] - sorted_ts[0]
+        if duration == 0:
+            return 1
+        else:
+            return (sorted_ts[-1] - sorted_ts[-2]) / duration
 
 
 def second_last(x):

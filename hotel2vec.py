@@ -66,7 +66,7 @@ def create_embeddings(nrows=None):
     return model
 
 
-def hotel2vec(model=None):
+def hotel2vec():
     fprint = Fprint().fprint
     filepath = './cache/hotel_2vec'
     check_dir(filepath)
@@ -75,7 +75,7 @@ def hotel2vec(model=None):
         fprint(f'Load the existing hotel2vec model from {filename}')
         embeddings = pd.read_csv(filename)
     else:
-        assert model is not None, 'hotel2vec model is required'
+        model = create_embeddings()
         train = load_data('train', usecols=['impressions'])
         train.dropna(inplace=True)
         train.drop_duplicates(inplace=True)
@@ -95,5 +95,4 @@ def hotel2vec(model=None):
 
 
 if __name__ == '__main__':
-    model = create_embeddings()
-    _ = hotel2vec(model)
+    _ = hotel2vec()

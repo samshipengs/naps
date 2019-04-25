@@ -68,7 +68,6 @@ def compute_diff(df, grp, cols):
     return pd.concat([df, diff], axis=1)
 
 
-
 def combine_inputs(data_source='train', nrows=None):
     fprint = Fprint().fprint
     fprint(f'Start data processing pipeline, first load raw {data_source} data')
@@ -100,6 +99,7 @@ def combine_inputs(data_source='train', nrows=None):
     # 1) all the manual encodings
     ae = action_encoding()
     ae_cols = [c for c in ae.columns if c != 'reference']
+    assert df['impression'].dtype == ae['reference'].dtype, 'dtype not matching'
     df = pd.merge(df.set_index('impression'), ae.set_index('reference'), left_index=True, right_index=True)
     del ae
     gc.collect()
@@ -110,6 +110,7 @@ def combine_inputs(data_source='train', nrows=None):
     # 2) the hotel2vec encodings
     hv = hotel2vec()
     hv_cols = [c for c in hv.columns if c != 'item_id']
+    assert df['impression'].dtype == hv['item_id'].dtype, 'dtype not matching'
     df = pd.merge(df.set_index('impression'), hv.set_index('item_id'), left_index=True, right_index=True)
     del hv
     gc.collect()
@@ -120,6 +121,7 @@ def combine_inputs(data_source='train', nrows=None):
     # 3) click view
     cv = click_view_encoding()
     cv_cols = [c for c in cv.columns if c != 'item_id']
+    assert df['impression'].dtype == cv['item_id'].dtype, 'dtype not matching'
     df = pd.merge(df.set_index('impression'), cv.set_index('item_id'), left_index=True, right_index=True)
     del cv
     df.index.name = 'impression'
@@ -129,6 +131,7 @@ def combine_inputs(data_source='train', nrows=None):
     # 4) meta
     meta = meta_encoding()
     meta_cols = [c for c in meta.columns if c != 'item_id']
+    assert df['impression'].dtype == meta['item_id'].dtype, 'dtype not matching'
     df = pd.merge(df.set_index('impression'), meta.set_index('item_id'), left_index=True, right_index=True)
     del meta
     df.index.name = 'impression'
@@ -213,6 +216,7 @@ def create_model_inputs(df=None):
             print('Done feature imp')
             break
 
+
 def plot_imp(data, fold_, plot_n=15):
     check_dir('./imps')
     imp = pd.DataFrame.from_records(data)
@@ -230,8 +234,8 @@ def plot_imp(data, fold_, plot_n=15):
 
 if __name__ == '__main__':
     data_source = 'train'
-    # nrows = 10000
-    nrows = None
+    nrows = 100000
+    # nrows = None
     # pipeline(data_source, nrows=nrows)
     df = combine_inputs(data_source=data_source, nrows=nrows)
     create_model_inputs(df)

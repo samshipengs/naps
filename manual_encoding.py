@@ -4,10 +4,10 @@ import numpy as np
 from utils import load_data, check_dir, Fprint
 
 
-def action_encoding(nrows=None, per_session=True):
+def action_encoding(nrows=None, per_session=True, recompute=False):
     filepath = './cache'
     filename = os.path.join(filepath, 'action_encodings.csv')
-    if os.path.isfile(filename):
+    if os.path.isfile(filename) and not recompute:
         print(f'Load from exsiting file: {filename}')
         encoding = pd.read_csv(filename)
     else:
@@ -16,6 +16,7 @@ def action_encoding(nrows=None, per_session=True):
         # remove references that were not integers (we could include them but these are
         # normally associated with destination search related actions)
         ref_act = ref_act[~ref_act.reference.str.contains('[a-zA-Z]')].reset_index(drop=True)
+        ref_act['reference'] = ref_act['reference'].astype(int)
         unique_actions = ref_act['action_type'].unique()
         # encode them in one-hot
         action2natural = {v: k for k, v in enumerate(unique_actions)}
@@ -61,10 +62,10 @@ def action_encoding(nrows=None, per_session=True):
     return encoding
 
 
-def click_view_encoding(nrows=None):
+def click_view_encoding(nrows=None, recompute=False):
     filepath = './cache'
     filename = os.path.join(filepath, 'clickview_encodings.csv')
-    if os.path.isfile(filename):
+    if os.path.isfile(filename) and not recompute:
         print(f'Load from exsiting file: {filename}')
         encoding = pd.read_csv(filename)
     else:
@@ -77,7 +78,7 @@ def click_view_encoding(nrows=None):
         # create list of impressions
         ref_imp['impressions'] = ref_imp['impressions'].str.split('|')
         # remove the clicked id from impressions
-        ref_imp['impressions'] = ref_imp.apply(lambda row: list(set(row.impressions) - set(row.reference)), axis=1)
+        ref_imp['impressions'] = ref_imp.apply(lambda row: list(set(row.impressions) - set([row.reference])), axis=1)
 
         # create 0 for impressions (viewed) and 1 for clicked
         imps = ref_imp.impressions.values
@@ -96,6 +97,7 @@ def click_view_encoding(nrows=None):
         smoothed = (count * mus + m * mu) / (count + m)
         # click_imp['clicked'] = click_imp['item_id'].map(smoothed)
         encoding = smoothed.reset_index(name='clicked')
+        encoding['item_id'] = encoding['item_id'].astype(int)
 
         # save
         check_dir(filepath)
@@ -103,10 +105,10 @@ def click_view_encoding(nrows=None):
     return encoding
 
 
-def meta_encoding():
+def meta_encoding(recompute=False):
     filepath = './cache'
     filename = os.path.join(filepath, 'meta_encodings.csv')
-    if os.path.isfile(filename):
+    if os.path.isfile(filename) and not recompute:
         print(f'Load from exsiting file: {filename}')
         encoding = pd.read_csv(filename)
     else:
@@ -129,7 +131,7 @@ def meta_encoding():
             zeros[i, ps[i]] = 1
 
         encoding = pd.DataFrame(zeros, columns=property_names, index=meta.item_id).reset_index()
-
+        encoding['item_id'] = encoding['item_id'].astype(int)
         # save
         check_dir(filepath)
         encoding.to_csv(filename, index=False)

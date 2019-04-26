@@ -7,6 +7,7 @@ from utils import get_logger
 
 logger = get_logger('reduce_memory')
 
+
 def reduce_object_mem_usage(df, mode='mapping', interested_cols=None):
     start_mem = df.memory_usage(deep=True).sum() / 1024 ** 2
     logger.info('Memory usage before optimization is: {:.2f} MB'.format(start_mem))
@@ -42,7 +43,7 @@ def reduce_object_mem_usage(df, mode='mapping', interested_cols=None):
 
 
 # reduce memory on numeric types
-def reduce_numeric_mem_usage(df, interested_cols=None):
+def reduce_numeric_mem_usage(df, interested_cols=None, parquet_safe=True):
     numerics = ['int16', 'int32', 'int64', 'float16', 'float32', 'float64']
     start_mem = df.memory_usage(deep=True).sum() / 1024 ** 2
     logger.info('Memory usage before optimization is: {:.2f} MB'.format(start_mem))
@@ -62,8 +63,12 @@ def reduce_numeric_mem_usage(df, interested_cols=None):
                 elif c_min > np.iinfo(np.int64).min and c_max < np.iinfo(np.int64).max:
                     df[col] = df[col].astype(np.int64)
             else:
+                # parquet doesn't support float 16 at the time
                 if c_min > np.finfo(np.float16).min and c_max < np.finfo(np.float16).max:
-                    df[col] = df[col].astype(np.float16)
+                    if parquet_safe:
+                        df[col] = df[col].astype(np.float32)
+                    else:
+                        df[col] = df[col].astype(np.float16)
                 elif c_min > np.finfo(np.float32).min and c_max < np.finfo(np.float32).max:
                     df[col] = df[col].astype(np.float32)
                 else:

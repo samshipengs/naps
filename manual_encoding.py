@@ -38,7 +38,7 @@ def action_encoding(nrows=None, per_session=True, recompute=False):
         del ref_act['action_type']
 
         # use smoothed encoding
-        M = [2] * len(action_names)
+        M = [5] * len(action_names)
         logger.info(f'Smooth with means weights: {M}')
         s = []
         for k, c in enumerate(action_names):
@@ -65,7 +65,14 @@ def action_encoding(nrows=None, per_session=True, recompute=False):
     return encoding
 
 
-def click_view_encoding(nrows=None, recompute=False):
+def click_view_encoding(m=5, nrows=None, recompute=False):
+    """
+    encode click and view
+    :param m: smoothing factor
+    :param nrows: load numebr of rows data
+    :param recompute:
+    :return:
+    """
     filepath = './cache'
     filename = os.path.join(filepath, 'clickview_encodings.csv')
     if os.path.isfile(filename) and not recompute:
@@ -93,7 +100,6 @@ def click_view_encoding(nrows=None, recompute=False):
 
         # smoothed encoding
         mu = click_imp['clicked'].mean()
-        m = 2
         agg = click_imp.groupby('item_id')['clicked'].agg(['count', 'mean'])
         count = agg['count']
         mus = agg['mean']

@@ -227,8 +227,8 @@ def plot_imp(data, fold_, plot_n=15):
 
 if __name__ == '__main__':
     data_source = 'train'
-    nrows = 100000
+    nrows = 1000000
     # nrows = None
     # pipeline(data_source, nrows=nrows)
-    df = combine_inputs(data_source=data_source, nrows=nrows)
+    df = combine_inputs(data_source=data_source, nrows=nrows, recompute=True)
     create_model_inputs(df)

@@ -5,6 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from clean_session import preprocess_sessions
+from reduce_memory import reduce_numeric_mem_usage
 from session_features import compute_session_fts
 from hotel2vec import hotel2vec
 from manual_encoding import action_encoding, click_view_encoding, meta_encoding
@@ -12,28 +13,6 @@ from utils import load_data, Fprint, check_dir, check_gpu
 
 from sklearn.model_selection import StratifiedKFold
 import catboost as cat
-
-
-# def pipeline(data_source='train', nrows=None):
-#     fprint = Fprint().fprint
-#     fprint(f'Start data processing pipeline, first load raw {data_source} data')
-#     df = load_data(data_source, nrows=nrows)
-#
-#     fprint('Preprocessing data')
-#     # clip sessions to last clickout and remove sessions with no clickout ( and remove duplicates)
-#     df = preprocess_sessions(df, data_source=data_source, rd=True, fprint=fprint)
-#
-#     fprint('Compute session features')
-#     _ = compute_session_fts(df, data_source=data_source)
-#
-#     fprint('Getting manual encoding')
-#     fprint('Action encoding')
-#     _ = action_encoding()
-#     fprint('Click view encoding')
-#     _ = click_view_encoding()
-#     fprint('Meta encoding')
-#     _ = meta_encoding()
-#     fprint('Done manual encodings')
 
 
 def explode(df):
@@ -99,6 +78,8 @@ def combine_inputs(data_source='train', nrows=None):
     # 1) all the manual encodings
     ae = action_encoding()
     ae_cols = [c for c in ae.columns if c != 'reference']
+    # reduce memory
+    reduce_numeric_mem_usage(ae, ae_cols)
     assert df['impression'].dtype == ae['reference'].dtype, 'dtype not matching'
     df = pd.merge(df.set_index('impression'), ae.set_index('reference'), left_index=True, right_index=True)
     del ae
@@ -110,6 +91,7 @@ def combine_inputs(data_source='train', nrows=None):
     # 2) the hotel2vec encodings
     hv = hotel2vec()
     hv_cols = [c for c in hv.columns if c != 'item_id']
+    reduce_numeric_mem_usage(hv, hv_cols)
     assert df['impression'].dtype == hv['item_id'].dtype, 'dtype not matching'
     df = pd.merge(df.set_index('impression'), hv.set_index('item_id'), left_index=True, right_index=True)
     del hv
@@ -121,6 +103,7 @@ def combine_inputs(data_source='train', nrows=None):
     # 3) click view
     cv = click_view_encoding()
     cv_cols = [c for c in cv.columns if c != 'item_id']
+    reduce_numeric_mem_usage(cv, cv_cols)
     assert df['impression'].dtype == cv['item_id'].dtype, 'dtype not matching'
     df = pd.merge(df.set_index('impression'), cv.set_index('item_id'), left_index=True, right_index=True)
     del cv
@@ -131,6 +114,7 @@ def combine_inputs(data_source='train', nrows=None):
     # 4) meta
     meta = meta_encoding()
     meta_cols = [c for c in meta.columns if c != 'item_id']
+    reduce_numeric_mem_usage(meta, meta_cols)
     assert df['impression'].dtype == meta['item_id'].dtype, 'dtype not matching'
     df = pd.merge(df.set_index('impression'), meta.set_index('item_id'), left_index=True, right_index=True)
     del meta
@@ -234,8 +218,8 @@ def plot_imp(data, fold_, plot_n=15):
 
 if __name__ == '__main__':
     data_source = 'train'
-    nrows = 100000
-    # nrows = None
+    # nrows = 100000
+    nrows = None
     # pipeline(data_source, nrows=nrows)
     df = combine_inputs(data_source=data_source, nrows=nrows)
     create_model_inputs(df)

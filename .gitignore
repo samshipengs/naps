@@ -9,6 +9,7 @@
 
 
 catboost_info/
+cat_feature_index*
 # code
 #*.ipynb
 .ipynb_checkpoints

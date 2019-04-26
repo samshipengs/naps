@@ -4,6 +4,9 @@
 *.log
 *.npy
 *.png
+*.snappy
+*.gzip
+
 
 catboost_info/
 # code

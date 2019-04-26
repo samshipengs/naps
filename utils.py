@@ -6,30 +6,45 @@ from time import time
 # import matplotlib.pyplot as plt
 import warnings
 import multiprocessing
+import logging
+
+
+def get_logger(name):
+    # add logging
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+
+    # create a file handler
+    file_handler = logging.FileHandler('logger.log')
+    file_handler.setLevel(logging.INFO)
+    # create a logging format
+    file_formatter = logging.Formatter('[%(asctime)s|%(name)s|%(funcName)s|%(levelname)s] %(message)s',
+                                       '%m-%d %H:%M:%S')
+    file_handler.setFormatter(file_formatter)
+    # add the handlers to the logger
+    logger.addHandler(file_handler)
+
+    # console handler
+    c_handler = logging.StreamHandler()
+    c_handler.setLevel(logging.INFO)
+    c_formatter = logging.Formatter('[%(asctime)s|%(name)s|%(funcName)s|%(levelname)s] %(message)s',
+                                    '%m-%d %H:%M:%S')
+    c_handler.setFormatter(c_formatter)
+    logger.addHandler(c_handler)
+    return logger
+
+
+logger = get_logger('utils')
 
 
 def ignore_warnings():
     """
     Ignore warnings
     """
-    print('WARNING IS BEING DISABLED! INCLUDING: PerformanceWarning, FutureWarning, UserWarning')
+    logger.warning('WARNING IS BEING DISABLED! INCLUDING: PerformanceWarning, FutureWarning, UserWarning')
     warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
     warnings.filterwarnings('ignore', category=FutureWarning)
     warnings.filterwarnings('ignore', category=UserWarning)
-
-
-class Fprint:
-    def __init__(self, t_init=None):
-        self.t_init = t_init
-        self.step = 0
-
-    def fprint(self, msg):
-        if self.step == 0:
-            self.t_init = time()
-            print(f'[>>>>>] {msg}')
-        else:
-            print(f'[>>>>>][te={(time()-self.t_init)/60:.2f} mins] {msg}')
-        self.step += 1
 
 
 def pshape(df, name='df'):
@@ -54,8 +69,8 @@ def load_data(data_soruce, data_path='./data/', nrows=None, verbose=False, **kwa
     df = pd.read_csv(os.path.join(data_path, data_soruce) + '.csv', nrows=nrows, **kwargs)
     if verbose:
         if (nrows is None) and (data_soruce in ['train', 'test']):
-            print('Warning: getting memory usage would take a while (~ 1min)')
-        print(f'Memory usage: {df.memory_usage(deep=True).sum()/1024**2:.2f} mb')
+            logger.warning('Getting memory usage would take a while (~ 1min)')
+        logger.info(f'Memory usage: {df.memory_usage(deep=True).sum()/1024**2:.2f} mb')
     return df
 
 
@@ -78,7 +93,7 @@ def get_cpu_count(stable=True):
     ncpu = multiprocessing.cpu_count()
     if stable:
         ncpu -= 1
-    print(f'[number of cpu count: {ncpu}]')
+    logger.info(f'[number of cpu count: {ncpu}]')
     return ncpu
 
 def check_dir(dirs):

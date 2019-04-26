@@ -2,7 +2,10 @@ import gc
 import os
 import numpy as np
 import pandas as pd
-from utils import Fprint, check_dir
+from utils import get_logger, check_dir
+
+
+logger = get_logger('session_features')
 
 
 def session_duration(ts):
@@ -100,14 +103,13 @@ def compute_session_fts(df, data_source='train'):
     """
     Create session features using groupby with agg
     """
-    fprint = Fprint().fprint
     filepath = './cache'
     check_dir(filepath)
     filename = os.path.join(filepath, 'session_fts.h5')
     if os.path.isfile(filename):
         store = pd.HDFStore(filename)
         if data_source in store.keys():
-            fprint(f'Load {data_source} from existing {filename}')
+            logger.info(f'Load {data_source} from existing {filename}')
             session_fts = pd.read_hdf(filename, data_source)
             return session_fts
     # define some aggs
@@ -123,20 +125,20 @@ def compute_session_fts(df, data_source='train'):
                     'n_imps': ['last'],
                     'n_filters': ['last']}
 
-    fprint("Generate length of 'impressions' and 'current_filters'")
+    logger.info("Generate length of 'impressions' and 'current_filters'")
     df['n_imps'] = df.impressions.str.split('|').str.len()
     df['n_filters'] = df.current_filters.str.split('|').str.len()
 
-    fprint("Creating session features using agg on groupby from 'session_id'")
+    logger.info("Creating session features using agg on groupby from 'session_id'")
     session_grp = df.groupby('session_id')
     session_fts = session_grp.agg(session_aggs)
 
-    fprint('Done creating session fts, cleaning up column names')
+    logger.info('Done creating session fts, cleaning up column names')
     session_fts.columns = ['_'.join(col).strip() for col in session_fts.columns.values]
     del df['n_imps'], df['n_filters']
     gc.collect()
 
-    fprint('Reset session_fts index and save it to h5')
+    logger.info('Reset session_fts index and save it to h5')
     session_fts.reset_index(inplace=True)
     session_fts.to_hdf(filename, data_source)
     return session_fts

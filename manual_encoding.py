@@ -1,14 +1,17 @@
 import os
 import pandas as pd
 import numpy as np
-from utils import load_data, check_dir, Fprint
+from utils import load_data, check_dir, get_logger
+
+
+logger = get_logger('manual_encoding')
 
 
 def action_encoding(nrows=None, per_session=True, recompute=False):
     filepath = './cache'
     filename = os.path.join(filepath, 'action_encodings.csv')
     if os.path.isfile(filename) and not recompute:
-        print(f'Load from exsiting file: {filename}')
+        logger.info(f'Load from exsiting file: {filename}')
         encoding = pd.read_csv(filename)
     else:
         # only load reference and action_type
@@ -36,10 +39,10 @@ def action_encoding(nrows=None, per_session=True, recompute=False):
 
         # use smoothed encoding
         M = [2] * len(action_names)
-        print('Smooth with means weights:', M)
+        logger.info(f'Smooth with means weights: {M}')
         s = []
         for k, c in enumerate(action_names):
-            print('smooth encoding >>>', c)
+            logger.info(f'smooth encoding: {c}')
             # Compute the global mean
             mu = ref_act[c].mean()
 
@@ -66,7 +69,7 @@ def click_view_encoding(nrows=None, recompute=False):
     filepath = './cache'
     filename = os.path.join(filepath, 'clickview_encodings.csv')
     if os.path.isfile(filename) and not recompute:
-        print(f'Load from exsiting file: {filename}')
+        logger.info(f'Load from exsiting file: {filename}')
         encoding = pd.read_csv(filename)
     else:
         # only load reference and action_type
@@ -109,7 +112,7 @@ def meta_encoding(recompute=False):
     filepath = './cache'
     filename = os.path.join(filepath, 'meta_encodings.csv')
     if os.path.isfile(filename) and not recompute:
-        print(f'Load from exsiting file: {filename}')
+        logger.info(f'Load from exsiting file: {filename}')
         encoding = pd.read_csv(filename)
     else:
         meta = load_data('item_metadata')
@@ -140,13 +143,12 @@ def meta_encoding(recompute=False):
 
 
 if __name__ == '__main__':
-    fprint = Fprint().fprint
-    fprint('Action encoding')
+    logger.info('Action encoding')
     _ = action_encoding()
-    fprint('Click view encoding')
+    logger.info('Click view encoding')
     _ = click_view_encoding()
-    fprint('Meta encoding')
+    logger.info('Meta encoding')
     _ = meta_encoding()
-    fprint('Done manual encodings')
+    logger.info('Done manual encodings')
 
 

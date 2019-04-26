@@ -3,23 +3,25 @@ import gc
 import numpy as np
 import pandas as pd
 from gensim.models import Word2Vec
-from utils import ignore_warnings, load_data, Fprint, pshape, get_cpu_count, check_dir
+from utils import ignore_warnings, load_data, get_logger, pshape, get_cpu_count, check_dir
 from clean_session import remove_duplicates
+
+
+logger = get_logger('hotel2vec')
 
 
 def load_train_test(nrows=None, rd=True):
     usecols = ['action_type', 'impressions']
-    fprint = Fprint().fprint
-    fprint('Load train data')
+    logger.info('Load train data')
     # train
     train = load_data('train', nrows=nrows)
     pshape(train, 'train')
     if rd:
-        fprint('Removing duplicates when training word2vec')
+        logger.info('Removing duplicates when training word2vec')
         train = remove_duplicates(train)
     train = train[usecols]
     # test
-    fprint('Load test data')
+    logger.info('Load test data')
     test = load_data('test', nrows=nrows)#, usecols=usecols)
     pshape(train, 'test')
     test = remove_duplicates(test)
@@ -29,19 +31,18 @@ def load_train_test(nrows=None, rd=True):
 
 
 def create_embeddings(nrows=None):
-    fprint = Fprint().fprint
     filepath = './cache/hotel_2vec'
     check_dir(filepath)
     filename = os.path.join(filepath, 'model.bin')
     if os.path.isfile(filename):
-        fprint(f'Load the existing hotel2vec model from {filename}')
+        logger.info(f'Load the existing hotel2vec model from {filename}')
         model = Word2Vec.load(filename)
     else:
         # first load data
-        fprint('Load concatenated train and test')
+        logger.info('Load concatenated train and test')
         tt = load_train_test(nrows=nrows)
 
-        fprint("Select only 'clickout item' action type and impressions not na")
+        logger.info("Select only 'clickout item' action type and impressions not na")
         # select the rows that is clickout
         is_clickout = tt['action_type'] == 'clickout item'
         del tt['action_type']
@@ -55,24 +56,23 @@ def create_embeddings(nrows=None):
         del tt
         gc.collect()
 
-        fprint('Train word2vec embeddings')
+        logger.info('Train word2vec embeddings')
         ncpu = get_cpu_count()
         # train model
         model = Word2Vec(impressions, min_count=1, workers=ncpu)
-        fprint('Done training, saving model to disk')
+        logger.info('Done training, saving model to disk')
 
         model.save(filename)
-        fprint(f'Done saving hotel2vec model to {filename}')
+        logger.info(f'Done saving hotel2vec model to {filename}')
     return model
 
 
 def hotel2vec():
-    fprint = Fprint().fprint
     filepath = './cache/hotel_2vec'
     check_dir(filepath)
     filename = os.path.join(filepath, 'embeddings.csv')
     if os.path.isfile(filename):
-        fprint(f'Load the existing hotel2vec model from {filename}')
+        logger.info(f'Load the existing hotel2vec model from {filename}')
         embeddings = pd.read_csv(filename)
     else:
         model = create_embeddings()

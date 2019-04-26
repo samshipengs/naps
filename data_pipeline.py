@@ -9,10 +9,13 @@ from reduce_memory import reduce_numeric_mem_usage
 from session_features import compute_session_fts
 from hotel2vec import hotel2vec
 from manual_encoding import action_encoding, click_view_encoding, meta_encoding
-from utils import load_data, Fprint, check_dir, check_gpu
+from utils import load_data, get_logger, check_dir, check_gpu
 
 from sklearn.model_selection import StratifiedKFold
 import catboost as cat
+
+
+logger = get_logger('data_pipeline')
 
 
 def explode(df):
@@ -47,19 +50,16 @@ def compute_diff(df, grp, cols):
     return pd.concat([df, diff], axis=1)
 
 
-def combine_inputs(data_source='train', nrows=None):
-    fprint = Fprint().fprint
-    fprint(f'Start data processing pipeline, first load raw {data_source} data')
+def combine_inputs(data_source='train', nrows=None, reduce_memory_size=False, recompute=False):
+    logger.info(f'Start data processing pipeline, first load raw {data_source} data')
 
     filepath = './cache'
     check_dir(filepath)
-    filename = os.path.join(filepath, 'combined_inputs.h5')
-    if os.path.isfile(filename):
-        store = pd.HDFStore(filename)
-        if data_source in store.keys():
-            fprint(f'Load {data_source} from existing {filename}')
-            session_fts = pd.read_hdf(filename, data_source)
-            return session_fts
+    filename = os.path.join(filepath, f'{data_source}_combined_inputs.snappy')
+    if os.path.isfile(filename) and not recompute:
+        logger.info(f'Load {data_source} from existing {filename}')
+        df = pd.read_parquet(filename)
+        return df
 
     df = load_data('train', nrows=nrows)
     df = preprocess_sessions(df, data_source='train', rd=True)
@@ -71,56 +71,60 @@ def combine_inputs(data_source='train', nrows=None):
     df['impressions'] = df.impressions.str.split('|')
     df['prices'] = df.prices.str.split('|')
 
-    fprint('Exploding on impressions and prices')
+    logger.info('Exploding on impressions and prices')
     df = explode(df)
-    fprint(f'After exploding, shape: {df.shape}')
+    logger.info(f'After exploding, shape: ({df.shape[0]:,}, {df.shape[1]})')
 
     # 1) all the manual encodings
     ae = action_encoding()
     ae_cols = [c for c in ae.columns if c != 'reference']
     # reduce memory
-    reduce_numeric_mem_usage(ae, ae_cols)
+    if reduce_memory_size:
+        reduce_numeric_mem_usage(ae, ae_cols)
     assert df['impression'].dtype == ae['reference'].dtype, 'dtype not matching'
     df = pd.merge(df.set_index('impression'), ae.set_index('reference'), left_index=True, right_index=True)
     del ae
     gc.collect()
     df.index.name = 'impression'
     df.reset_index(inplace=True)
-    fprint(f'After adding action encodings, shape: {df.shape}')
+    logger.info(f'After adding action encodings, shape: ({df.shape[0]:,}, {df.shape[1]})')
 
     # 2) the hotel2vec encodings
     hv = hotel2vec()
     hv_cols = [c for c in hv.columns if c != 'item_id']
-    reduce_numeric_mem_usage(hv, hv_cols)
+    if reduce_memory_size:
+        reduce_numeric_mem_usage(hv, hv_cols)
     assert df['impression'].dtype == hv['item_id'].dtype, 'dtype not matching'
     df = pd.merge(df.set_index('impression'), hv.set_index('item_id'), left_index=True, right_index=True)
     del hv
     gc.collect()
     df.index.name = 'impression'
     df.reset_index(inplace=True)
-    fprint(f'After adding hotelvec, shape: {df.shape}')
+    logger.info(f'After adding hotelvec, shape: ({df.shape[0]:,}, {df.shape[1]})')
 
     # 3) click view
     cv = click_view_encoding()
     cv_cols = [c for c in cv.columns if c != 'item_id']
-    reduce_numeric_mem_usage(cv, cv_cols)
+    if reduce_memory_size:
+        reduce_numeric_mem_usage(cv, cv_cols)
     assert df['impression'].dtype == cv['item_id'].dtype, 'dtype not matching'
     df = pd.merge(df.set_index('impression'), cv.set_index('item_id'), left_index=True, right_index=True)
     del cv
     df.index.name = 'impression'
     df.reset_index(inplace=True)
-    fprint(f'After adding clickview, shape: {df.shape}')
+    logger.info(f'After adding clickview, shape: ({df.shape[0]:,}, {df.shape[1]})')
 
     # 4) meta
     meta = meta_encoding()
     meta_cols = [c for c in meta.columns if c != 'item_id']
-    reduce_numeric_mem_usage(meta, meta_cols)
+    if reduce_memory_size:
+        reduce_numeric_mem_usage(meta, meta_cols)
     assert df['impression'].dtype == meta['item_id'].dtype, 'dtype not matching'
     df = pd.merge(df.set_index('impression'), meta.set_index('item_id'), left_index=True, right_index=True)
     del meta
     df.index.name = 'impression'
     df.reset_index(inplace=True)
-    fprint(f'After adding meta, shape: {df.shape}')
+    logger.info(f'After adding meta, shape: ({df.shape[0]:,}, {df.shape[1]})')
 
     # groupby
     grp = df.groupby('session_id')
@@ -131,9 +135,9 @@ def combine_inputs(data_source='train', nrows=None):
     df = compute_diff(df, grp, cv_cols)
     df = compute_diff(df, grp, meta_cols)
 
-    fprint(f'Done combing data, shape: {df.shape}')
-    df.to_hdf(filename, data_source)
-    fprint(f'Done saving {filename}')
+    logger.info(f'Done combing data, shape: ({df.shape[0]:,}, {df.shape[1]})')
+    df.to_parquet(filename)
+    logger.info(f'Done saving {filename}')
 
     return df
 
@@ -141,7 +145,7 @@ def combine_inputs(data_source='train', nrows=None):
 # encode city, platform and device
 def categorize(df, cols):
     for col in cols:
-        print('converting', col)
+        logger.info(f'converting {col}')
         unique_values = df[col].unique()
         mapping = {v: k for k, v in enumerate(unique_values)}
         df[col] = df[col].map(mapping)
@@ -154,7 +158,7 @@ def create_model_inputs(df=None):
         # create target
         df['target'] = (df.reference == df.impression).astype(int)
         del df['reference']
-        print(df['target'].value_counts())
+        logger.info(df['target'].value_counts())
         # categorize
         cat_fts = ['city', 'platform', 'device', 'action_type', 'impression']
         categorize(df, cat_fts)
@@ -172,11 +176,16 @@ def create_model_inputs(df=None):
                   'task_type': device,
                   'loss_function': 'MultiClass',
                   'eval_metric': 'Accuracy'}
-        for trn_ind, val_ind in skf.split(sids, sids):
-            trn_mask = df.session_id.isin(sids[trn_ind])
+        # for trn_ind, val_ind in skf.split(sids, sids):
+        for trn_ind, val_ind in skf.split(target, target):
+
+            # trn_mask = df.session_id.isin(sids[trn_ind])
             del df['session_id']
-            x_trn, x_val = df[trn_mask], df[~trn_mask]
-            y_trn, y_val = target[trn_mask], target[~trn_mask]
+            # x_trn, x_val = df[trn_mask], df[~trn_mask]
+            # y_trn, y_val = target[trn_mask], target[~trn_mask]
+
+            x_trn, y_trn = df.iloc[trn_ind], target[trn_ind]
+            x_val, y_val = df.iloc[val_ind], target[val_ind]
 
             categorical_ind = [k for k, v in enumerate(x_trn.columns) if v in cat_fts]
 
@@ -188,8 +197,8 @@ def create_model_inputs(df=None):
                     early_stopping_rounds=100,
                     verbose=100,
                     plot=False)
-            print('Done!')
-            print('Grab feature importance for both train and val')
+            logger.info('Done!')
+            logger.info('Grab feature importance for both train and val')
             # get feature importance
             trn_imp = clf.get_feature_importance(data=cat.Pool(data=x_trn, cat_features=categorical_ind),
                                                  prettified=True)
@@ -197,7 +206,7 @@ def create_model_inputs(df=None):
                                                  prettified=True)
             plot_imp(trn_imp, 'train')
             plot_imp(val_imp, 'val')
-            print('Done feature imp')
+            logger.info('Done feature imp')
             break
 
 
@@ -218,8 +227,8 @@ def plot_imp(data, fold_, plot_n=15):
 
 if __name__ == '__main__':
     data_source = 'train'
-    # nrows = 100000
-    nrows = None
+    nrows = 100000
+    # nrows = None
     # pipeline(data_source, nrows=nrows)
     df = combine_inputs(data_source=data_source, nrows=nrows)
     create_model_inputs(df)

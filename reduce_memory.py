@@ -2,11 +2,14 @@ import pandas as pd
 import numpy as np
 import time
 import argparse
+from utils import get_logger
 
+
+logger = get_logger('reduce_memory')
 
 def reduce_object_mem_usage(df, mode='mapping', interested_cols=None):
     start_mem = df.memory_usage(deep=True).sum() / 1024 ** 2
-    print('Memory usage before optimization is: {:.2f} MB'.format(start_mem))
+    logger.info('Memory usage before optimization is: {:.2f} MB'.format(start_mem))
 
     if interested_cols is None:
         o_cols = df.dtypes[df.dtypes == 'O'].index
@@ -14,7 +17,7 @@ def reduce_object_mem_usage(df, mode='mapping', interested_cols=None):
         o_cols = df[interested_cols].dtypes[df[interested_cols].dtypes == 'O'].index
 
     if mode == 'mapping':
-        print('Reducing with int mapping')
+        logger.info('Reducing with int mapping')
         for col in o_cols:
             # mapping
             mapping = {v: k for k, v in enumerate(df[col].unique())}
@@ -28,21 +31,21 @@ def reduce_object_mem_usage(df, mode='mapping', interested_cols=None):
             elif max_ < np.iinfo(np.int64).max:
                 df[col] = df[col].map(mapping).astype(np.int64)
     else:
-        print('Reducing with dtype category')
+        logger.info('Reducing with dtype category')
         for col in o_cols:
             # change to categorical type
             df[col] = df[col].astype('category')
 
     end_mem = df.memory_usage(deep=True).sum() / 1024 ** 2
-    print('Memory usage after optimization is: {:.2f} MB'.format(end_mem))
-    print('Decreased by {:.1f}%'.format(100 * (start_mem - end_mem) / start_mem))
+    logger.info('Memory usage after optimization is: {:.2f} MB'.format(end_mem))
+    logger.info('Decreased by {:.1f}%'.format(100 * (start_mem - end_mem) / start_mem))
 
 
 # reduce memory on numeric types
 def reduce_numeric_mem_usage(df, interested_cols=None):
     numerics = ['int16', 'int32', 'int64', 'float16', 'float32', 'float64']
     start_mem = df.memory_usage(deep=True).sum() / 1024 ** 2
-    print('Memory usage before optimization is: {:.2f} MB'.format(start_mem))
+    logger.info('Memory usage before optimization is: {:.2f} MB'.format(start_mem))
     columns = df.columns if interested_cols is None else interested_cols
     for col in columns:
         col_type = df[col].dtypes
@@ -67,8 +70,8 @@ def reduce_numeric_mem_usage(df, interested_cols=None):
                     df[col] = df[col].astype(np.float64)
 
     end_mem = df.memory_usage(deep=True).sum() / 1024 ** 2
-    print('Memory usage after optimization is: {:.2f} MB'.format(end_mem))
-    print('Decreased by {:.1f}%'.format(100 * (start_mem - end_mem) / start_mem))
+    logger.info('Memory usage after optimization is: {:.2f} MB'.format(end_mem))
+    logger.info('Decreased by {:.1f}%'.format(100 * (start_mem - end_mem) / start_mem))
 
 
 class Elasped:
@@ -77,30 +80,30 @@ class Elasped:
 
     def timer(self, msg):
         diff = np.round((time.time() - self.initial_time) / 60)
-        print('{} | time elapsed: {}mins'.format(msg, diff))
+        logger.info('{} | time elapsed: {}mins'.format(msg, diff))
         return diff
 
 
 def main(file_name):
-    print('loading data')
+    logger.info('loading data')
     t_int = time.time()
     p = Elasped(t_int)
     data_sample = pd.read_csv(file_name)
     p.timer('Done loading')
 
     initial_memory = data_sample.memory_usage(deep=True).sum() / 1024 ** 2
-    print('Original memeory footprint: {0:.2f} MB'.format(initial_memory))
+    logger.info('Original memeory footprint: {0:.2f} MB'.format(initial_memory))
 
-    print('Reducing object type mem usage')
+    logger.info('Reducing object type mem usage')
     reduce_object_mem_usage(data_sample)
     p.timer('Done')
 
-    print('Reducing numeric type mem usage')
+    logger.info('Reducing numeric type mem usage')
     reduce_numeric_mem_usage(data_sample)
     p.timer('Done')
 
     end_memory = data_sample.memory_usage(deep=True).sum() / 1024 ** 2
-    print('Reduced by {:.2f}%'.format(100 * (initial_memory - end_memory) / initial_memory))
+    logger.info('Reduced by {:.2f}%'.format(100 * (initial_memory - end_memory) / initial_memory))
     save_file = 'reduced.h5'
     data_sample.to_hdf(save_file, key='data')
     p.timer('Done saving file to {}'.format(save_file))

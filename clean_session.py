@@ -1,6 +1,6 @@
 import numpy as np
 from functools import partial
-from utils import Fprint
+from utils import logger
 
 
 # 0)
@@ -10,9 +10,9 @@ def remove_duplicates(df):
                    ascending=[True, True, True, True],
                    inplace=True)
     duplicated_mask = df[[c for c in df.columns if c != 'step']].duplicated(keep='last')
-    print('Before dropping duplicates df shape:', df.shape)
+    logger.info(f'Before dropping duplicates df shape: ({df.shape[0]:,}, {df.shape[1]})')
     df = df[~duplicated_mask].reset_index(drop=True)
-    print('After dropping duplicates df shape:', df.shape)
+    logger.info(f'After dropping duplicates df shape: ({df.shape[0]:,}, {df.shape[1]})')
     return df
 
 
@@ -40,21 +40,19 @@ def filter_clickout(grp, data_source='train'):
     return has_clickout & has_ref
 
 
-def preprocess_sessions(df, data_source='train', rd=True, fprint=None):
-    if fprint is None:
-        fprint = Fprint().fprint
+def preprocess_sessions(df, data_source='train', rd=True):
     if rd:
-        fprint('Remove initial duplciates')
+        logger.info('Remove initial duplciates')
         df = remove_duplicates(df)
-    fprint('Cliping session dataframe up to last click out (if there is clickout)')
+    logger.info('Cliping session dataframe up to last click out (if there is clickout)')
     df = df.groupby('session_id').apply(clip_last_click).reset_index(drop=True)
 
-    fprint('filtering out sessions without clickouts, reference, or clickout is nan')
-    print(f'{data_source} length before filtering: {len(df):,}')
+    logger.info('filtering out sessions without clickouts, reference, or clickout is nan')
+    logger.info(f'{data_source} length before filtering: {len(df):,}')
     filter_func = partial(filter_clickout, data_source=data_source)
     valid_clicked = df.groupby('session_id').apply(filter_func)
     click_session_ids = valid_clicked[valid_clicked].index
     # filter
     df = df[df.session_id.isin(click_session_ids)].reset_index(drop=True)
-    print(f'{data_source} length after filtering: {len(df):,}')
+    logger.info(f'{data_source} length after filtering: {len(df):,}')
     return df

@@ -11,9 +11,6 @@ from hotel2vec import hotel2vec
 from manual_encoding import action_encoding, click_view_encoding, meta_encoding
 from utils import load_data, get_logger, check_dir, check_gpu
 
-from sklearn.model_selection import StratifiedKFold
-import catboost as cat
-
 
 logger = get_logger('data_pipeline')
 

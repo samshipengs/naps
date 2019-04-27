@@ -1,3 +1,6 @@
+"""
+Create session related features, such as number of unique actions, last reference id before last clickout etc.
+"""
 import numpy as np
 import gc
 

@@ -1,3 +1,6 @@
+"""
+Create session related features, such as number of unique actions, last reference id before last clickout etc.
+"""
 import gc
 import os
 import numpy as np
@@ -118,10 +121,10 @@ def compute_session_fts(df, data_source='train'):
                     'step': ['max'],
                     'action_type': ['nunique', n_prev_clickouts, avg_clickout_loc, second_last],
                     'reference': ['nunique', second_last],
-                    'city': ['last'],
-                    'platform': ['last'],
+                    # 'city': ['last'],
+                    # 'platform': ['last'],
                     'device': ['last'],
-                    # below opeartes on createed features
+                    # below operates on created features
                     'n_imps': ['last'],
                     'n_filters': ['last']}
 

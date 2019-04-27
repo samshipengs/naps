@@ -1,3 +1,6 @@
+"""
+Reduce memory footprint for numeric or object dtype
+"""
 import pandas as pd
 import numpy as np
 import time

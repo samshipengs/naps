@@ -47,7 +47,8 @@ def train(params, df=None, split_mode='target', n_splits=5):
         sids = df['session_id'].unique()
         splits = sids
 
-    oof = df[['session_id', 'target']].copy()
+    oof = df[['session_id', 'impression', 'target']].copy()
+    base = df[['session_id', 'impression', 'target']].copy()
     del df['session_id']
 
     # grab the targets
@@ -56,14 +57,17 @@ def train(params, df=None, split_mode='target', n_splits=5):
 
     categorical_ind = [k for k, v in enumerate(df.columns) if v in cat_fts]
 
-    for trn_ind, val_ind in folds.split(splits, splits):
+    logger.info('Start training with cv')
+    for fold, (trn_ind, val_ind) in enumerate(folds.split(splits, splits)):
         if split_mode == 'target':
             x_trn, y_trn = df.iloc[trn_ind], target[trn_ind]
             x_val, y_val = df.iloc[val_ind], target[val_ind]
+            base_trn, base_val = base.iloc[trn_ind].copy(), base.iloc[val_ind].copy()
         else:
             trn_mask = df['session_id'].isin(sids[trn_ind])
             x_trn, y_trn = df[trn_mask], target[trn_mask]
             x_val, y_val = df[~trn_mask], target[~trn_mask]
+            base_trn, base_val = base.loc[trn_mask].copy(), base.loc[~trn_mask].copy()
 
         # train model
         clf = cat.CatBoostClassifier(**params)
@@ -75,6 +79,10 @@ def train(params, df=None, split_mode='target', n_splits=5):
                 plot=False)
         # assign prediction to oof
         oof.loc[val_ind, 'prediction'] = clf.predict_proba(x_val.values)[:, 1]
+        # and also the train
+        base_trn['prediction'] = clf.predict_proba(x_trn.values)[:, 1]
+        base_val['prediction'] = oof.loc[val_ind, 'prediction']
+
         logger.info('Done training')
         logger.info('Getting feature importance for both train and val')
         # get feature importance
@@ -82,27 +90,34 @@ def train(params, df=None, split_mode='target', n_splits=5):
                                              prettified=True)
         val_imp = clf.get_feature_importance(data=cat.Pool(data=x_val, cat_features=categorical_ind),
                                              prettified=True)
-        plot_imp(trn_imp, 'train')
-        plot_imp(val_imp, 'val')
+        plot_imp(trn_imp, fold)
         logger.info('Done feature imp')
 
         # compute mrr
-        logger.info('Computing mrr')
-        mean_reciprocal_rank(oof.loc[val_ind, 'prediction'])
-
-        break
+        # base_trn.to_csv('./temp1.csv')
+        logger.info('Computing train mrr')
+        mean_reciprocal_rank(base_trn)
+        logger.info('Computing val mrr')
+        # base_val.to_csv('./temp2.csv')
+        mean_reciprocal_rank(base_val)
+    logger.info('Computing oof mrr')
+    mean_reciprocal_rank(oof)
+    logger.info('Done all')
+        # break
 
 
 def mean_reciprocal_rank(predictions):
-    df = predictions.sort_values(by=['session_id', 'prediction'], ascending=[True, False]).reset_index(drop=True)
-    pred_transposed = df.groupby('session_id').apply(list).reset_index(name='predictions')
+    df = predictions.sort_values(by=['session_id', 'prediction'],
+                                 ascending=[True, False]).reset_index(drop=True)
+    pred_transposed = df.groupby('session_id')['impression'].apply(list).reset_index(name='recommendations')
     df_reference = df[df['target'] != 0]
     combined = pd.merge(df_reference, pred_transposed, on='session_id')
+
     def find_rank(x):
-        t = x.target
-        ps = x.predictions
+        t = x.impression
+        ps = x.recommendations
         if t in ps:
-            return (ps.index(t)+1)/len(ps)
+            return 1/(ps.index(t)+1)
         else:
             return np.nan
     combined['mrr'] = combined.apply(find_rank, axis=1)
@@ -130,7 +145,7 @@ def run():
     data_source = 'train'
     nrows = 1000000
     # nrows = None
-    df = combine_inputs(data_source=data_source, nrows=nrows, recompute=True)
+    df = combine_inputs(data_source=data_source, nrows=nrows, reduce_memory_size=True, recompute=False)
 
     device = 'GPU' if check_gpu() else 'CPU'
     params = {'iterations': 1000,

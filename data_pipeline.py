@@ -55,6 +55,7 @@ def combine_inputs(data_source='train', nrows=None, reduce_memory_size=False, re
     filename = os.path.join(filepath, f'{data_source}_combined_inputs.snappy')
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load {data_source} from existing {filename}')
+        logger.warning('Since this is a reload, it may not reflect the latest change in settings')
         df = pd.read_parquet(filename)
         return df
 
@@ -143,7 +144,6 @@ def combine_inputs(data_source='train', nrows=None, reduce_memory_size=False, re
     logger.info(f'Done saving {filename}')
 
     return df
-
 
 
 if __name__ == '__main__':

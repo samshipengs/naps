@@ -48,6 +48,7 @@ def train(params, df=None, split_mode='target', n_splits=5):
         folds = KFold(n_splits=n_splits)
         sids = df['session_id'].unique()
         splits = sids
+        df_sids = df['session_id']
 
     # create oof
     oof = df[['session_id', 'impression', 'target']].copy()
@@ -61,17 +62,19 @@ def train(params, df=None, split_mode='target', n_splits=5):
     # get the column index of the categorical columns
     categorical_ind = [k for k, v in enumerate(df.columns) if v in cat_fts]
 
-    logger.info('Start training with cv')
+    logger.info(f'Start training with cv and params:\n{params}')
     for fold, (trn_ind, val_ind) in enumerate(folds.split(splits, splits)):
         if split_mode == 'target':
             x_trn, y_trn = df.iloc[trn_ind], target[trn_ind]
             x_val, y_val = df.iloc[val_ind], target[val_ind]
             base_trn, base_val = base.iloc[trn_ind].copy(), base.iloc[val_ind].copy()
         else:
-            trn_mask = df['session_id'].isin(sids[trn_ind])
+            trn_mask = df_sids.isin(sids[trn_ind])
             x_trn, y_trn = df[trn_mask], target[trn_mask]
             x_val, y_val = df[~trn_mask], target[~trn_mask]
             base_trn, base_val = base.loc[trn_mask].copy(), base.loc[~trn_mask].copy()
+            # since the split index was based on only ids, we need to give it the actual index for oof
+            val_ind = np.where(~trn_mask)
 
         # train model
         clf = cat.CatBoostClassifier(**params)
@@ -83,11 +86,13 @@ def train(params, df=None, split_mode='target', n_splits=5):
                 plot=False)
 
         logger.info('Done training, generating predictions for oof, train and val for evaluation purpose')
-        # assign prediction to oof
-        oof.loc[val_ind, 'prediction'] = clf.predict_proba(x_val.values)[:, 1]
-        # and also the train
-        base_trn['prediction'] = clf.predict_proba(x_trn.values)[:, 1]
-        base_val['prediction'] = oof.loc[val_ind, 'prediction']
+        # assign prediction
+        trn_rped =clf.predict_proba(x_trn.values)[:, 1]
+        val_pred = clf.predict_proba(x_val.values)[:, 1]
+
+        oof.loc[oof.index[val_ind], 'prediction'] = val_pred
+        base_trn['prediction'] = trn_rped
+        base_val['prediction'] = val_pred
 
         # compute mrr
         logger.info('Computing train mrr')
@@ -152,9 +157,12 @@ def plot_imp(data, fold_, mrr, plot_n=15):
 
 def run():
     data_source = 'train'
-    nrows = 1000000
+    ntrain = 15932993
+    nrows = 10000000
     # nrows = None
-    df = combine_inputs(data_source=data_source, nrows=nrows, reduce_memory_size=True, recompute=False)
+    if nrows is not None:
+        logger.info(f'Training using {nrows:,} rows which is {nrows/ntrain:.2f}% out of total train data')
+    df = combine_inputs(data_source=data_source, nrows=nrows, reduce_memory_size=True, recompute=True)
 
     device = 'GPU' if check_gpu() else 'CPU'
     logger.info(f'Using device: {device}')
@@ -165,8 +173,10 @@ def run():
               'loss_function': 'Logloss',
               'custom_metric': ['Logloss', 'Accuracy', 'AUC', 'Precision', 'Recall'],
               'eval_metric': 'Logloss'}
+    if device == 'CPU':
+        params['rsm'] = 0.5
 
-    train(params, df=df, split_mode='target', n_splits=5)
+    train(params, df=df, split_mode='sids', n_splits=5)
 
 
 if __name__ == '__main__':

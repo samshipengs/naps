@@ -66,7 +66,18 @@ def load_data(data_soruce, data_path='./data/', nrows=None, verbose=False, **kwa
     :param kwargs:
     :return: dataframe
     """
+    assert  data_soruce in ['train', 'test']
+    ntrain = 15932993
+    ntest = 3782336
+    if nrows is not None:
+        if data_soruce == 'train':
+            load_per = nrows/ntrain
+        else:
+            load_per = nrows/ntest
+        logger.info(f'Loading {data_soruce} using {nrows:,} rows which is {load_per:.2f}% out of total train data')
+    # read
     df = pd.read_csv(os.path.join(data_path, data_soruce) + '.csv', nrows=nrows, **kwargs)
+
     if verbose:
         if (nrows is None) and (data_soruce in ['train', 'test']):
             logger.warning('Getting memory usage would take a while (~ 1min)')

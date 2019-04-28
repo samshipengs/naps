@@ -158,11 +158,9 @@ def plot_imp(data, fold_, mrr, plot_n=15):
 
 def run():
     data_source = 'train'
-    ntrain = 15932993
     nrows = 10000000
     # nrows = None
-    if nrows is not None:
-        logger.info(f'Training using {nrows:,} rows which is {nrows/ntrain:.2f}% out of total train data')
+
     df = combine_inputs(data_source=data_source, nrows=nrows, reduce_memory_size=True, recompute=False)
     reduce_numeric_mem_usage(df)
 

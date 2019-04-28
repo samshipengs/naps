@@ -1,7 +1,8 @@
+import os
 import numpy as np
 from functools import partial
+import pandas as pd
 from utils import logger
-
 
 # 0)
 # def remove_duplicates(df):
@@ -41,19 +42,25 @@ def filter_clickout(grp, data_source='train'):
     return has_clickout & has_ref
 
 
-def preprocess_sessions(df, data_source='train'):  # , rd=True):
-    # if rd:
-    #     logger.info('Remove initial duplicates')
-    #     df = remove_duplicates(df)
-    logger.info('Cliping session dataframe up to last click out (if there is clickout)')
-    df = df.groupby('session_id').apply(clip_last_click).reset_index(drop=True)
+def preprocess_sessions(df, data_source='train', save=True, recompute=False):
+    filepath = './cache'
+    filename = os.path.join(filepath, f'preprocessed_{data_source}.snappy')
+    if os.path.isfile(filename) and not recompute:
+        logger.info(f'Load from existing file: {filename}')
+        df = pd.read_parquet(filename)
+    else:
+        logger.info('Cliping session dataframe up to last click out (if there is clickout)')
+        df = df.groupby('session_id').apply(clip_last_click).reset_index(drop=True)
 
-    logger.info('filtering out sessions without clickouts, reference, or clickout is nan')
-    logger.info(f'{data_source} length before filtering: {len(df):,}')
-    filter_func = partial(filter_clickout, data_source=data_source)
-    valid_clicked = df.groupby('session_id').apply(filter_func)
-    click_session_ids = valid_clicked[valid_clicked].index
-    # filter
-    df = df[df.session_id.isin(click_session_ids)].reset_index(drop=True)
-    logger.info(f'{data_source} length after filtering: {len(df):,}')
+        logger.info('filtering out sessions without clickouts, reference, or clickout is nan')
+        logger.info(f'{data_source} length before filtering: {len(df):,}')
+        filter_func = partial(filter_clickout, data_source=data_source)
+        valid_clicked = df.groupby('session_id').apply(filter_func)
+        click_session_ids = valid_clicked[valid_clicked].index
+        # filter
+        df = df[df.session_id.isin(click_session_ids)].reset_index(drop=True)
+        logger.info(f'{data_source} length after filtering: {len(df):,}')
+        if save:
+            logger.info(f'Saving {filename}')
+            df.to_parquet(filename)
     return df

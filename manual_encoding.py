@@ -11,7 +11,7 @@ def action_encoding(nrows=None, per_session=True, save=True, recompute=False):
     filepath = './cache'
     filename = os.path.join(filepath, 'action_encodings.csv')
     if os.path.isfile(filename) and not recompute:
-        logger.info(f'Load from exsiting file: {filename}')
+        logger.info(f'Load from existing file: {filename}')
         encoding = pd.read_csv(filename)
     else:
         # only load reference and action_type
@@ -79,7 +79,7 @@ def click_view_encoding(m=5, nrows=None, recompute=False):
     filepath = './cache'
     filename = os.path.join(filepath, 'clickview_encodings.csv')
     if os.path.isfile(filename) and not recompute:
-        logger.info(f'Load from exsiting file: {filename}')
+        logger.info(f'Load from existing file: {filename}')
         encoding = pd.read_csv(filename)
     else:
         # only load reference and action_type
@@ -121,7 +121,7 @@ def meta_encoding(recompute=False):
     filepath = './cache'
     filename = os.path.join(filepath, 'meta_encodings.csv')
     if os.path.isfile(filename) and not recompute:
-        logger.info(f'Load from exsiting file: {filename}')
+        logger.info(f'Load from existing file: {filename}')
         encoding = pd.read_csv(filename)
     else:
         meta = load_data('item_metadata')

@@ -4,29 +4,33 @@ import numpy as np
 import pandas as pd
 from gensim.models import Word2Vec
 from utils import ignore_warnings, load_data, get_logger, pshape, get_cpu_count, check_dir
-from clean_session import remove_duplicates
+# from clean_session import remove_duplicates
 
 
 logger = get_logger('hotel2vec')
 
 
-def load_train_test(nrows=None, rd=True):
+def load_train_test(nrows=None):
     usecols = ['action_type', 'impressions']
     logger.info('Load train data')
     # train
     train = load_data('train', nrows=nrows)
-    pshape(train, 'train')
-    if rd:
-        logger.info('Removing duplicates when training word2vec')
-        train = remove_duplicates(train)
+    train = train.drop_duplicates(subset=[c for c in train.columns if c != 'step']).reset_index(drop=True)
     train = train[usecols]
+    pshape(train, 'train')
+    # select only clickout and the impressions are not nan
+    trn_mask = (train['action_type'] == 'clickout item') & (train['impressions'].notna())
+    train = train[trn_mask].reset_index(drop=True)
+
     # test
     logger.info('Load test data')
-    test = load_data('test', nrows=nrows)#, usecols=usecols)
-    pshape(train, 'test')
-    test = remove_duplicates(test)
+    test = load_data('test', nrows=nrows)
+    test = test.drop_duplicates(subset=[c for c in train.columns if c != 'step']).reset_index(drop=True)
     test = test[usecols]
-    # concat
+    pshape(train, 'test')
+    test_mask = (test['action_type'] == 'clickout item') & (test['impressions'].notna())
+    test = test[test_mask].reset_index(drop=True)
+
     return pd.concat([train, test], axis=0, ignore_index=True)
 
 
@@ -42,14 +46,6 @@ def create_embeddings(nrows=None):
         logger.info('Load concatenated train and test')
         tt = load_train_test(nrows=nrows)
 
-        logger.info("Select only 'clickout item' action type and impressions not na")
-        # select the rows that is clickout
-        is_clickout = tt['action_type'] == 'clickout item'
-        del tt['action_type']
-        # and the impressions are not nans
-        imp_not_na = tt['impressions'].notna()
-        select_mask = is_clickout & imp_not_na
-        tt = tt[select_mask].reset_index(drop=True)
         # convert to list of item ids (str)
         tt['impressions'] = tt['impressions'].str.split('|')
         impressions = list(tt['impressions'].values)
@@ -90,8 +86,6 @@ def hotel2vec():
         embeddings['item_id'] = embeddings['item_id'].astype(int)
         embeddings.to_csv(filename)
     return embeddings
-
-
 
 
 if __name__ == '__main__':

@@ -8,7 +8,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from utils import load_data, get_logger, check_dir, check_gpu, get_logger
+from utils import load_data, check_dir, check_gpu, get_logger
+from reduce_memory import reduce_numeric_mem_usage
 from data_pipeline import combine_inputs
 from sklearn.model_selection import StratifiedKFold, KFold
 import catboost as cat
@@ -162,7 +163,8 @@ def run():
     # nrows = None
     if nrows is not None:
         logger.info(f'Training using {nrows:,} rows which is {nrows/ntrain:.2f}% out of total train data')
-    df = combine_inputs(data_source=data_source, nrows=nrows, reduce_memory_size=True, recompute=True)
+    df = combine_inputs(data_source=data_source, nrows=nrows, reduce_memory_size=True, recompute=False)
+    reduce_numeric_mem_usage(df)
 
     device = 'GPU' if check_gpu() else 'CPU'
     logger.info(f'Using device: {device}')

@@ -2,7 +2,6 @@ import os
 import gc
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 from clean_session import preprocess_sessions
 from reduce_memory import reduce_numeric_mem_usage
@@ -60,7 +59,7 @@ def combine_inputs(data_source='train', nrows=None, reduce_memory_size=False, re
         return df
 
     df = load_data('train', nrows=nrows)
-    df = preprocess_sessions(df, data_source='train', rd=True)
+    df = preprocess_sessions(df, data_source='train')
     drop_cols = ['user_id', 'timestamp', 'current_filters']
     df = df.drop(drop_cols, axis=1)
     logger.info(f'Selecting only the last row of each session, current len:{df.shape[0]:,}')

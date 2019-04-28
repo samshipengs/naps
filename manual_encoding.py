@@ -7,7 +7,7 @@ from utils import load_data, check_dir, get_logger
 logger = get_logger('manual_encoding')
 
 
-def action_encoding(nrows=None, per_session=True, recompute=False):
+def action_encoding(nrows=None, per_session=True, save=True, recompute=False):
     filepath = './cache'
     filename = os.path.join(filepath, 'action_encodings.csv')
     if os.path.isfile(filename) and not recompute:
@@ -20,7 +20,9 @@ def action_encoding(nrows=None, per_session=True, recompute=False):
         # normally associated with destination search related actions)
         ref_act = ref_act[~ref_act.reference.str.contains('[a-zA-Z]')].reset_index(drop=True)
         ref_act['reference'] = ref_act['reference'].astype(int)
+        # get all the unique actions
         unique_actions = ref_act['action_type'].unique()
+        logger.info(f'The unique actions to encode are:\n{unique_actions}')
         # encode them in one-hot
         action2natural = {v: k for k, v in enumerate(unique_actions)}
         action_names = list(action2natural.keys())
@@ -61,7 +63,8 @@ def action_encoding(nrows=None, per_session=True, recompute=False):
         # ref_act.drop_duplicates(inplace=True)
         # ref_act.reset_index(drop=True, inplace=True)
         check_dir(filepath)
-        encoding.to_csv(filename, index=False)
+        if save:
+            encoding.to_csv(filename, index=False)
     return encoding
 
 

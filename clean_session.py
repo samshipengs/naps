@@ -4,16 +4,17 @@ from utils import logger
 
 
 # 0)
-def remove_duplicates(df):
-    # find duplciates except steps
-    df.sort_values(by=['user_id', 'session_id', 'timestamp', 'step'],
-                   ascending=[True, True, True, True],
-                   inplace=True)
-    duplicated_mask = df[[c for c in df.columns if c != 'step']].duplicated(keep='last')
-    logger.info(f'Before dropping duplicates df shape: ({df.shape[0]:,}, {df.shape[1]})')
-    df = df[~duplicated_mask].reset_index(drop=True)
-    logger.info(f'After dropping duplicates df shape: ({df.shape[0]:,}, {df.shape[1]})')
-    return df
+# def remove_duplicates(df):
+#     """THIS SHOULD NOT BE USED ANYMORE DUE TO A -> B -> A HAPPENS AT THE SAME TIMESTAMP"""
+#     # find duplciates except steps
+#     df.sort_values(by=['user_id', 'session_id', 'timestamp', 'step'],
+#                    ascending=[True, True, True, True],
+#                    inplace=True)
+#     duplicated_mask = df[[c for c in df.columns if c != 'step']].duplicated(keep='last')
+#     logger.info(f'Before dropping duplicates df shape: ({df.shape[0]:,}, {df.shape[1]})')
+#     df = df[~duplicated_mask].reset_index(drop=True)
+#     logger.info(f'After dropping duplicates df shape: ({df.shape[0]:,}, {df.shape[1]})')
+#     return df
 
 
 # 1) Cliping sessions up to last clickout (if there is clickout)
@@ -40,10 +41,10 @@ def filter_clickout(grp, data_source='train'):
     return has_clickout & has_ref
 
 
-def preprocess_sessions(df, data_source='train', rd=True):
-    if rd:
-        logger.info('Remove initial duplciates')
-        df = remove_duplicates(df)
+def preprocess_sessions(df, data_source='train'):  # , rd=True):
+    # if rd:
+    #     logger.info('Remove initial duplicates')
+    #     df = remove_duplicates(df)
     logger.info('Cliping session dataframe up to last click out (if there is clickout)')
     df = df.groupby('session_id').apply(clip_last_click).reset_index(drop=True)
 

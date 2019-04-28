@@ -1,9 +1,9 @@
-# import numpy as np
+import numpy as np
 import pandas as pd
 import subprocess
 import os
 from time import time
-# import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 import warnings
 import multiprocessing
 import logging
@@ -121,17 +121,39 @@ def check_dir(dirs):
         if not os.path.exists(dirs):
             os.makedirs(dirs)
 
-#
-# def plot_imp(data, fold_, plot_n=15):
-#     check_dir('./imps')
-#     imp = pd.DataFrame.from_records(data)
-#     imp.to_csv(f'./imps/{fold_}.csv', index=False)
-#     imp.columns = ['features', 'feature_importance']
-#     imp_des = imp.sort_values(by='feature_importance', ascending=False)
-#     imp_asc = imp.sort_values(by='feature_importance', ascending=True)
-#
-#     fig, axes = plt.subplots(figsize=(8, 8), nrows=2, ncols=1)
-#     imp_des[:plot_n].plot(x='features', y='feature_importance', ax=axes[0], kind='barh', grid=True)
-#     imp_asc[:plot_n].plot(x='features', y='feature_importance', ax=axes[1], kind='barh', grid=True)
-#     plt.tight_layout()
-#     fig.savefig('./imps/{}.png'.format(fold_))
+
+def plot_imp_cat(data, fold_, mrr, plot_n=15):
+    check_dir('./imps')
+    imp = pd.DataFrame.from_records(data)
+    imp.to_csv(f'./imps/{fold_}.csv', index=False)
+    imp.columns = ['features', 'feature_importance']
+    imp_des = imp.sort_values(by='feature_importance', ascending=False)
+    imp_asc = imp.sort_values(by='feature_importance', ascending=True)
+
+    fig, axes = plt.subplots(figsize=(8, 8), nrows=2, ncols=1)
+    axes[0].set_title(f"trn_mrr={np.round(mrr['train'], 4)} - val_mrr={np.round(mrr['val'], 4)}")
+    imp_des[:plot_n].plot(x='features', y='feature_importance', ax=axes[0], kind='barh', grid=True)
+    imp_asc[:plot_n].plot(x='features', y='feature_importance', ax=axes[1], kind='barh', grid=True)
+    plt.tight_layout()
+    fig.savefig('./imps/{}.png'.format(fold_))
+
+
+def plot_imp_lgb(imp_df, fold_, mrr, plot_n=15):
+    """
+    This funciton is to plot the feature importance for top plot_n features
+    :param imp_df: feature importance dataframe
+    :param fold_: current cross validation fold
+    :param plot_n: top n features to plot on feature importanc graph
+    """
+    check_dir('./imps')
+    imp_df.sort_values(by='feature_importance', ascending=False).to_csv('./imps/{}.csv'.format(fold_))
+    imp_des = imp_df.sort_values(by='feature_importance', ascending=False)[:plot_n]
+    imp_asc = imp_df.sort_values(by='feature_importance', ascending=True)[:plot_n]
+
+    fig, axes = plt.subplots(figsize=(8, 8), nrows=2, ncols=1)
+    axes[0].set_title(f"trn_mrr={np.round(mrr['train'], 4)} - val_mrr={np.round(mrr['val'], 4)}")
+    _ = imp_des.plot(x='features', y='feature_importance', ax=axes[0], kind='barh', grid=True)
+    _ = imp_asc.plot(x='features', y='feature_importance', ax=axes[1], kind='barh', grid=True)
+    plt.tight_layout()
+    fig.savefig('./imps/{}.png'.format(fold_))
+    plt.gcf().clear()

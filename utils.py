@@ -66,7 +66,6 @@ def load_data(data_soruce, data_path='./data/', nrows=None, verbose=False, **kwa
     :param kwargs:
     :return: dataframe
     """
-    assert  data_soruce in ['train', 'test']
     ntrain = 15932993
     ntest = 3782336
     if nrows is not None:

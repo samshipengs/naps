@@ -4,18 +4,18 @@ from functools import partial
 import pandas as pd
 from utils import logger
 
+
 # 0)
-# def remove_duplicates(df):
-#     """THIS SHOULD NOT BE USED ANYMORE DUE TO A -> B -> A HAPPENS AT THE SAME TIMESTAMP"""
-#     # find duplciates except steps
-#     df.sort_values(by=['user_id', 'session_id', 'timestamp', 'step'],
-#                    ascending=[True, True, True, True],
-#                    inplace=True)
-#     duplicated_mask = df[[c for c in df.columns if c != 'step']].duplicated(keep='last')
-#     logger.info(f'Before dropping duplicates df shape: ({df.shape[0]:,}, {df.shape[1]})')
-#     df = df[~duplicated_mask].reset_index(drop=True)
-#     logger.info(f'After dropping duplicates df shape: ({df.shape[0]:,}, {df.shape[1]})')
-#     return df
+def remove_duplicates(df):
+    # find duplicates except steps
+    df.sort_values(by=['user_id', 'session_id', 'timestamp', 'step'],
+                   ascending=[True, True, True, True],
+                   inplace=True)
+    logger.info(f'Before dropping duplicates df shape: ({df.shape[0]:,}, {df.shape[1]})')
+    cols = [c for c in df.columns if c != 'step']
+    df = df.drop_duplicates(subset=cols, keep='last').reset_index(drop=True)
+    logger.info(f'After dropping duplicates df shape: ({df.shape[0]:,}, {df.shape[1]})')
+    return df
 
 
 # 1) Cliping sessions up to last clickout (if there is clickout)
@@ -42,13 +42,16 @@ def filter_clickout(grp, data_source='train'):
     return has_clickout & has_ref
 
 
-def preprocess_sessions(df, data_source='train', save=True, recompute=False):
+def preprocess_sessions(df, data_source='train', drop_duplicates=True, save=True, recompute=False):
     filepath = './cache'
     filename = os.path.join(filepath, f'preprocessed_{data_source}.snappy')
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load from existing file: {filename}')
         df = pd.read_parquet(filename)
     else:
+        if drop_duplicates:
+            logger.info('Dropping duplicates')
+            df = remove_duplicates(df)
         logger.info('Cliping session dataframe up to last click out (if there is clickout)')
         df = df.groupby('session_id').apply(clip_last_click).reset_index(drop=True)
 
@@ -57,6 +60,7 @@ def preprocess_sessions(df, data_source='train', save=True, recompute=False):
         filter_func = partial(filter_clickout, data_source=data_source)
         valid_clicked = df.groupby('session_id').apply(filter_func)
         click_session_ids = valid_clicked[valid_clicked].index
+
         # filter
         df = df[df.session_id.isin(click_session_ids)].reset_index(drop=True)
         logger.info(f'{data_source} length after filtering: {len(df):,}')

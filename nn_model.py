@@ -84,7 +84,7 @@ def build_model(n_uniques, conv1d_filter_size=5):
                   outputs=output_layer)
 
     opt = optimizers.Adam(lr=0.001)
-    model.compile(optimizer=opt, loss="categorical_crossentropy", metrics=['accuracy'])
+    model.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=['accuracy'])
     return model
 
 

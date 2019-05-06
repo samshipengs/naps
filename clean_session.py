@@ -2,7 +2,7 @@ import os
 import numpy as np
 from functools import partial
 import pandas as pd
-from utils import logger
+from utils import logger, check_dir
 
 
 # 0)
@@ -44,6 +44,7 @@ def filter_clickout(grp, data_source='train'):
 
 def preprocess_sessions(df, data_source='train', drop_duplicates=True, save=True, recompute=False):
     filepath = './cache'
+    check_dir(filepath)
     filename = os.path.join(filepath, f'preprocessed_{data_source}.snappy')
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load from existing file: {filename}')

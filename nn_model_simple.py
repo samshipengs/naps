@@ -16,7 +16,7 @@ def build_model(n_cfs, batch_size, dense_act='relu'):
     # IMPRESSIONS
     params = {'nb_filters': 32,
               'kernel_size': 3,
-              'nb_stacks': 1,
+              'nb_stacks': 2,
               'padding': 'causal',
               'dilations': [1, 2, 4],
               # 'activation': 'norm_relu',

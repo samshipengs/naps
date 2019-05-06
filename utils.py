@@ -66,14 +66,14 @@ def load_data(data_soruce, data_path='./data/', nrows=None, verbose=False, **kwa
     :param kwargs:
     :return: dataframe
     """
-    ntrain = 15932993
+    ntrain = 15932993  # '15,932,993'
     ntest = 3782336
     if nrows is not None:
         if data_soruce == 'train':
             load_per = nrows/ntrain
         else:
             load_per = nrows/ntest
-        logger.info(f'Loading {data_soruce} using {nrows:,} rows which is {load_per:.2f}% out of total train data')
+        logger.info(f'Loading {data_soruce} using {nrows:,} rows which is {load_per*100:.2f}% out of total train data')
     # read
     df = pd.read_csv(os.path.join(data_path, data_soruce) + '.csv', nrows=nrows, **kwargs)
 

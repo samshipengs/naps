@@ -24,7 +24,7 @@ def build_model(n_cfs, batch_size, dense_act='relu'):
               'dropout_rate': 0.3,
               'return_sequences': False,
               'name': 'tcn'}
-    print('CHANGED ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~'*10)
+
     impression_input = Input(shape=(None, 157), name='impression_input')
     params['name'] = 'impression_tcn'
     impression_tcn = TCN(**params)(impression_input)

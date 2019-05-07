@@ -28,6 +28,30 @@ def load_train(nrows):
     return train
 
 
+def create_cfs_mapping(recompute=False):
+    filepath = './cache'
+    check_dir(filepath)
+    filename = os.path.join(filepath, 'filters_mapping.npy')
+    if os.path.isfile(filename) and not recompute:
+        cfs_mapping = np.load(filename).item()
+        n_cfs = len(cfs_mapping)
+    else:
+        train = load_data('train', nrows=None, usecols=['current_filters'])
+        test = load_data('test', nrows=None, usecols=['current_filters'])
+        train = train[train['current_filters'].notna()]
+        test = test[test['current_filters'].notna()]
+        df = pd.concat([train, test], axis=0, ignore_index=True)
+        del train, test
+        df['current_filters'] = df['current_filters'].str.lower().str.split('|')
+        # get unique cfs
+        unique_cfs = list(set(np.concatenate(df['current_filters'].values)))
+        cfs_mapping = {v: k for k, v in enumerate(unique_cfs)}
+        logger.info('SAVING FILTERS MAPPING')
+        np.save('./cache/filters_mapping.npy', cfs_mapping)
+        n_cfs = len(unique_cfs)
+    return cfs_mapping, n_cfs
+
+
 # create some session features
 def session_duration(ts):
     if len(ts) == 1:
@@ -137,7 +161,8 @@ def create_train_inputs(nrows=100000, recompute=False):
                 return np.nan
             else:
                 if ref in imp:
-                    return (imp.index(ref)+1)/len(imp)
+                    return imp.index(ref) + 1
+                    # return (imp.index(ref) + 1) / len(imp)
                 else:
                     return np.nan
 
@@ -183,11 +208,12 @@ def create_train_inputs(nrows=100000, recompute=False):
         gc.collect()
 
         logger.info('CREATE OHE SUPERPOSITION OF FILTERS')
-        unique_cfs = list(set(np.concatenate(train['cfs'].dropna().values)))
-        cfs_mapping = {v: k for k, v in enumerate(unique_cfs)}
-        logger.info('SAVING FILTERS MAPPING')
-        np.save('./cache/filters_mapping.npy', cfs_mapping)
-        n_cfs = len(unique_cfs)
+        # unique_cfs = list(set(np.concatenate(train['cfs'].dropna().values)))
+        # cfs_mapping = {v: k for k, v in enumerate(unique_cfs)}
+        # logger.info('SAVING FILTERS MAPPING')
+        # np.save('./cache/filters_mapping.npy', cfs_mapping)
+        # n_cfs = len(unique_cfs)
+        cfs_mapping, n_cfs = create_cfs_mapping()
         logger.info(f'THERE ARE TOTAL {n_cfs} UNIQUE FILTERS')
 
         logger.info('APPLY FILTERS OHE SUPERPOSITION TO EACH RECORDS')
@@ -229,6 +255,7 @@ def create_train_inputs(nrows=100000, recompute=False):
         logger.info('Getting numerics')
         # numerics
         num_cols = ['session_id_size', 'timestamp_dwell_time_prior_clickout', 'last_ref_ind']
+        logger.info('Filling nans with value=-1')
         for c in num_cols:
             train[c] = train[c].fillna(-1)
         numerics = train[num_cols].values

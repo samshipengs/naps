@@ -13,6 +13,11 @@ from create_nn_test_input import create_test_inputs
 
 logger = get_logger('train_nn')
 
+TO_DO = ('1) maybe fillna -1 is too overwhelming for last_reference_id_index if normalized \n'
+         '2) session_id size and dwell_time prior last click maybe need normalization in scale or maybe add batchnorm')
+
+logger.info(TO_DO)
+
 
 def iterate_minibatches(numerics, impressions, prices, cfilters, targets,
                         batch_size, shuffle=True):
@@ -117,7 +122,7 @@ def train(numerics, impressions, prices, cfilters, targets):
 
 if __name__ == '__main__':
     # first create training inputs
-    numerics, impressions, prices, cfilters, targets = create_train_inputs(nrows=5000000, recompute=True)
+    numerics, impressions, prices, cfilters, targets = create_train_inputs(nrows=500000, recompute=True)
     # train the model
     models = train(numerics, impressions, prices, cfilters, targets)
     # get the test inputs

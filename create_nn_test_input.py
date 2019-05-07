@@ -3,6 +3,7 @@ import numpy as np
 import datetime, os, gc
 from utils import load_data, get_logger, check_dir
 from clean_session import preprocess_sessions
+from create_nn_train_input import create_cfs_mapping
 
 
 logger = get_logger('create_nn_input')
@@ -135,7 +136,8 @@ def create_test_inputs(nrows=None, recompute=False):
                 return np.nan
             else:
                 if ref in imp:
-                    return (imp.index(ref)+1)/len(imp)
+                    return imp.index(ref) + 1
+                    # return (imp.index(ref)+1)/len(imp)
                 else:
                     return np.nan
 
@@ -154,8 +156,9 @@ def create_test_inputs(nrows=None, recompute=False):
         del meta_mapping
         gc.collect()
 
-        cfs_mapping = np.load('./cache/filters_mapping.npy').item()
-        n_cfs = len(cfs_mapping)
+        # cfs_mapping = np.load('./cache/filters_mapping.npy').item()
+        # n_cfs = len(cfs_mapping)
+        cfs_mapping, n_cfs = create_cfs_mapping()
         logger.info(f'THERE ARE TOTAL {n_cfs} UNIQUE FILTERS')
 
         logger.info('APPLY FILTERS OHE SUPERPOSITION TO EACH RECORDS')

@@ -5,7 +5,8 @@ from sklearn.model_selection import StratifiedKFold
 from datetime import datetime as dt
 from nn_model_simple import build_model
 from keras.utils import plot_model
-from create_nn_input import create_inputs
+from create_nn_train_input import create_train_inputs
+from create_nn_test_input import create_test_inputs
 
 
 logger = get_logger('train_nn')
@@ -43,11 +44,11 @@ def train(numerics, impressions, prices, cfilters, targets):
     logger.info(f'Number of unique current_filters is: {n_cfs}')
 
     batch_size = 128
-    n_epochs = 500
+    n_epochs = 50
 
     skf = StratifiedKFold(n_splits=6)
-
-    for trn_ind, val_ind in skf.split(targets, targets):
+    models = []
+    for fold, (trn_ind, val_ind) in enumerate(skf.split(targets, targets)):
         trn_numerics, val_numerics = numerics[trn_ind], numerics[val_ind]
         trn_imp, val_imp = impressions[trn_ind], impressions[val_ind]
         trn_price, val_price = prices[trn_ind], prices[val_ind]
@@ -77,7 +78,7 @@ def train(numerics, impressions, prices, cfilters, targets):
         check_dir('./models')
         plot_model(model, to_file='./models/model.png')
         # add some callbacks
-        model_file = 'test.model'
+        model_file = f'./models/cv{fold}.model'
         callbacks = [ModelCheckpoint(model_file, save_best_only=True, verbose=1)]
         log_dir = "logs/{}".format(dt.now().strftime('%m-%d-%H-%M'))
         tb = TensorBoard(log_dir=log_dir, write_graph=True, write_grads=True)
@@ -107,10 +108,22 @@ def train(numerics, impressions, prices, cfilters, targets):
         val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
         val_mrr = np.mean(1 / (val_pred_label + 1))
         print(f'train mrr: {trn_mrr:.2f} | val mrr: {val_mrr:.2f}')
-
+        models.append(model)
         break
+    return models
 
 
 if __name__ == '__main__':
-    numerics, impressions, prices, cfilters, targets = create_inputs(nrows=5000000, recompute=False)
-    train(numerics, impressions, prices, cfilters, targets)
+    # first create training inputs
+    numerics, impressions, prices, cfilters, targets = create_train_inputs(nrows=5000000, recompute=True)
+    # train the model
+    models = train(numerics, impressions, prices, cfilters, targets)
+    # get the test inputs
+    numerics, impressions, prices, cfilters = create_test_inputs(recompute=False)
+    # make predictions on test
+    check_dir('./subs')
+    for m, model in enumerate(models):
+        logger.info(f'Generating submission from model {m}')
+        test_pred = model.predict(x=[numerics, impressions, prices[:, :, None], cfilters], batch_size=2048)
+        # trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
+        np.save(f'./subs/sub{m}.npy', test_pred)

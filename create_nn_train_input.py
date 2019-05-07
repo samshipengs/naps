@@ -77,7 +77,7 @@ def save_cache(arr, name, filepath='./cache'):
     np.save(os.path.join(filepath, name), arr)
 
 
-def create_inputs(nrows=100000, recompute=False):
+def create_train_inputs(nrows=100000, recompute=False):
     filepath = './cache'
     check_dir(filepath)
     filenames = [os.path.join(filepath, f'{i}.npy') for i in ['train_numerics', 'train_impressions', 'train_prices',
@@ -130,12 +130,13 @@ def create_inputs(nrows=100000, recompute=False):
 
         def assign_last_ref_id(row):
             ref = row['reference_last_reference_id']
-            imp = [str(i) for i in row['impressions']]
+            # imp = [str(i) for i in row['impressions']]
+            imp = list(row['impressions'])
             if pd.isna(ref):
                 return np.nan
             else:
                 if ref in imp:
-                    return imp.index(ref)
+                    return (imp.index(ref)+1)/len(imp)
                 else:
                     return np.nan
 
@@ -243,7 +244,7 @@ def create_inputs(nrows=100000, recompute=False):
 
 
 def pipeline():
-    _ = create_inputs(nrows=1000000)
+    _ = create_train_inputs(nrows=1000000)
 
 
 

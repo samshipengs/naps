@@ -3,13 +3,12 @@ Train model and perform necessary steps such as convert categorical column to na
 index for lightgbm and catboost
 """
 import os
-import gc
 import numpy as np
 import pandas as pd
 
-from utils import load_data, check_dir, check_gpu, get_logger, plot_imp_cat, plot_imp_lgb
+from utils import check_gpu, get_logger, plot_imp_cat, plot_imp_lgb
 from reduce_memory import reduce_numeric_mem_usage
-from data_pipeline import combine_inputs
+from prev_pys_1.data_pipeline import combine_inputs
 from sklearn.model_selection import StratifiedKFold, KFold
 import catboost as cat
 import lightgbm as lgb

@@ -16,7 +16,7 @@ class TestHotelVec(unittest.TestCase):
 class TestSessionFeatures(unittest.TestCase):
     """
     session_aggs = {'timestamp': [span, mean_dwell_time, var_dwell_time, median_dwell_time, dwell_time_before_last],
-                    'step': ['max'],
+                    'step': ['max'],prev_pys_1
                     'action_type': ['nunique', n_clickouts, click_rel_pos_avg, second_last],
                     'reference': [second_last],
                     'city': ['nunique', get_last],

@@ -2,23 +2,43 @@ import numpy as np
 import pandas as pd
 import subprocess
 import os
-from time import time
 import matplotlib.pyplot as plt
 import warnings
 import multiprocessing
 import logging
+from datetime import datetime as dt
+
+
+def check_dir(dirs):
+    """
+    Create a or a list of directories
+    :param dirs:
+    :return:
+    """
+    if type(dirs) == list:
+        for d in dirs:
+            if not os.path.exists(d):
+                os.makedirs(d)
+    else:
+        if not os.path.exists(dirs):
+            os.makedirs(dirs)
 
 
 def get_logger(name):
+    logger_path = './loggers'
+    check_dir(logger_path)
+
     # add logging
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
 
     # create a file handler
-    file_handler = logging.FileHandler('logger.log')
+    current_time = dt.now().strftime('%m-%d')
+    file_handler = logging.FileHandler(os.path.join(logger_path, f'{current_time}.log'))
     file_handler.setLevel(logging.INFO)
     # create a logging format
-    file_formatter = logging.Formatter('[%(asctime)s - %(name)8s - %(funcName)s - %(levelname)s] %(message)s',
+    file_formatter = logging.Formatter(('[%(asctime)s - %(name)s-%(lineno)d - %(funcName)s - %(levelname)s ] '
+                                       '%(message)s'),
                                        '%m-%d %H:%M:%S')
     file_handler.setFormatter(file_formatter)
     # add the handlers to the logger
@@ -27,7 +47,7 @@ def get_logger(name):
     # console handler
     c_handler = logging.StreamHandler()
     c_handler.setLevel(logging.INFO)
-    c_formatter = logging.Formatter('[%(asctime)s - %(name)s - %(funcName)s - %(levelname)s] %(message)s',
+    c_formatter = logging.Formatter('[%(asctime)s - %(name)s-%(lineno)d - %(funcName)s - %(levelname)s] %(message)s',
                                     '%m-%d %H:%M:%S')
     c_handler.setFormatter(c_formatter)
     logger.addHandler(c_handler)
@@ -105,20 +125,6 @@ def get_cpu_count(stable=True):
         ncpu -= 1
     logger.info(f'[number of cpu count: {ncpu}]')
     return ncpu
-
-def check_dir(dirs):
-    """
-    Create a or a list of directories
-    :param dirs:
-    :return:
-    """
-    if type(dirs) == list:
-        for d in dirs:
-            if not os.path.exists(d):
-                os.makedirs(d)
-    else:
-        if not os.path.exists(dirs):
-            os.makedirs(dirs)
 
 
 def plot_imp_cat(data, fold_, mrr, plot_n=15):

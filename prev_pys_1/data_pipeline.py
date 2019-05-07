@@ -5,11 +5,9 @@ import pandas as pd
 
 from clean_session import preprocess_sessions
 from reduce_memory import reduce_numeric_mem_usage
-from session_features import compute_session_fts
 from hotel2vec import hotel2vec
-from manual_encoding import action_encoding, click_view_encoding, meta_encoding
-from utils import load_data, get_logger, check_dir, check_gpu
-
+from prev_pys_1.manual_encoding import action_encoding, click_view_encoding, meta_encoding
+from utils import load_data, get_logger, check_dir
 
 logger = get_logger('data_pipeline')
 

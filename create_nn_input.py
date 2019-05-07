@@ -6,8 +6,11 @@ from clean_session import preprocess_sessions
 
 
 logger = get_logger('create_nn_input')
+
+
 def flogger(df, name):
     logger.info(f'{name} shape: ({df.shape[0]:,}, {df.shape[1]})')
+
 
 def load_train(nrows):
     # first load data
@@ -32,12 +35,14 @@ def session_duration(ts):
     else:
         return (ts.max() - ts.min()).total_seconds()
 
+
 def dwell_time_prior_clickout(ts):
     if len(ts) == 1:
         return np.nan
     else:
         ts_sorted = ts.sort_values()
         return (ts_sorted.iloc[-1] - ts_sorted.iloc[-2]).total_seconds()
+
 
 def last_filters(cf):
     mask = cf.notna()
@@ -46,12 +51,14 @@ def last_filters(cf):
     else:
         return cf[mask].iloc[-1]
 
+
 def last_reference_id(rids):
     mask = rids.notna()
     if mask.sum() <= 1:
         return np.nan
     else:
         return rids[mask].iloc[-2]  # the second last i.e. the one before click out
+
 
 def compute_session_fts(df):
     aggs = {'timestamp': [session_duration, dwell_time_prior_clickout],
@@ -66,15 +73,20 @@ def compute_session_fts(df):
     return pd.merge(df, session_fts, on='session_id')
 
 
-def create_inputs(nrows=100000):
+def save_cache(arr, name, filepath='./cache'):
+    np.save(os.path.join(filepath, name), arr)
+
+
+def create_inputs(nrows=100000, recompute=False):
     filepath = './cache'
     check_dir(filepath)
-    # filename = os.path.join(filepath, 'processed_train.snappy')
-    filename = os.path.join(filepath, 'processed_train.h5')
-    if os.path.isfile(filename):
-        logger.info(f'LOAD FROM EXISTING {filename}')
+    filenames = [os.path.join(filepath, f'{i}.npy') for i in ['train_numerics', 'train_impressions', 'train_prices',
+                                                              'train_cfilters', 'train_targets']]
+    if sum([os.path.isfile(f) for f in filenames]) == len(filenames) and not recompute:
+        logger.info(f'LOAD FROM EXISTING {filenames}')
         # train = pd.read_parquet(filename)
-        train = pd.read_hdf(filename, 'train')
+        # train = pd.read_hdf(filename, 'train')
+        numerics, impressions, prices, cfilters, targets = [np.load(f) for f in filenames]
     else:
         logger.info('LOAD TRAIN')
         train = load_train(nrows)
@@ -103,6 +115,7 @@ def create_inputs(nrows=100000):
         train['impressions'] = train['impressions'].apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant'))
 
         logger.info('ASSIGN TARGET')
+
         # filter out nan rows with reference_id not in impressions list, since if the true target in test
         # is not in the impression list then it would not get evaluated
         def assign_target(row):
@@ -113,7 +126,8 @@ def create_inputs(nrows=100000):
             else:
                 return np.nan
 
-        logger.info('ALSO ASSIGN LOCATION OF PRVIOUS REFERENCE ID')
+        logger.info('ALSO ASSIGN LOCATION OF PREVIOUS REFERENCE ID')
+
         def assign_last_ref_id(row):
             ref = row['reference_last_reference_id']
             imp = [str(i) for i in row['impressions']]
@@ -179,25 +193,57 @@ def create_inputs(nrows=100000):
                                                   .apply(lambda cfs: [cfs_mapping[cf] for cf in cfs]))
         # zeros if the cfs is nan (checked with type(cfs) is list not float
         train['cfs'] = (train['cfs'].apply(lambda cfs: np.sum(np.eye(n_cfs, dtype=int)[cfs], axis=0)
-                                                if type(cfs) == list else np.zeros(n_cfs, dtype=int)))
+                                           if type(cfs) == list else np.zeros(n_cfs, dtype=int)))
         del cfs_mapping
         gc.collect()
 
-        logger.info('NORMALIZE PRICES')
-        # maybe normalize to percentage within each records, check does each item_id have the same price over all records
+        logger.info('Grabbing list of inputs')
+        logger.info('Normalizing price')
+
+        # maybe normalize to percentage within each records, check does each item_id have the same price
+        # over all records
         def normalize(ps):
             p_arr = np.array(ps)
             return p_arr / (p_arr.max())
+
         train['prices'] = train['prices'].apply(normalize)
-        logger.info(f'SAVE {filename}')
-        # train.to_parquet(filename)
-        train.to_hdf(filename, key='train')
-        logger.info('DONE SAVING')
-    return train
+        # PRICES
+        prices = np.array(list(train['prices'].values))
+        del train['prices']
+        save_cache(prices, 'train_prices.npy')
+
+        logger.info('Getting impressions')
+        # IMPRESSIONS
+        impressions = np.array(list(train['impressions'].values))
+        del train['impressions']
+        save_cache(impressions, 'train_impressions.npy')
+
+        logger.info('Getting current_filters')
+        # CURRENT_FILTERS
+        cfilters = np.array(list(train['cfs'].values))
+        del train['cfs']
+        save_cache(cfilters, 'train_cfilters.npy')
+
+        logger.info('Getting numerics')
+        # numerics
+        num_cols = ['session_id_size', 'timestamp_dwell_time_prior_clickout', 'last_ref_ind']
+        for c in num_cols:
+            train[c] = train[c].fillna(-1)
+        numerics = train[num_cols].values
+        train = train.drop(num_cols, axis=1)
+        save_cache(numerics, 'train_numerics.npy')
+
+        logger.info('Getting targets')
+        # TARGETS
+        targets = train['target'].values
+        del train['target']
+        save_cache(targets, 'train_targets.npy')
+
+    return numerics, impressions, prices, cfilters, targets
 
 
 def pipeline():
-    train = create_inputs(nrows=1000000)
+    _ = create_inputs(nrows=1000000)
 
 
 

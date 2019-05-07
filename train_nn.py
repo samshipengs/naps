@@ -1,11 +1,6 @@
-import pandas as pd
 import numpy as np
-import datetime, time, os, gc, re, sys
-from functools import partial
-import matplotlib.pyplot as plt
-from utils import ignore_warnings, load_data, get_logger, check_dir
-from clean_session import preprocess_sessions
-from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
+from utils import get_logger, check_dir
+from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
 from sklearn.model_selection import StratifiedKFold
 from datetime import datetime as dt
 from nn_model_simple import build_model
@@ -42,54 +37,13 @@ def iterate_minibatches(numerics, impressions, prices, cfilters, targets,
                     cfilters_batch], targets_batch)
 
 
-def get_data(nrows=100000):
-    train = create_inputs(nrows)
-
-    logger.info('Grabbing list of inputs')
-    logger.info('Normalizing price')
-    # maybe normalize to percentage within each records, check does each item_id have the same price over all records
-    def normalize(ps):
-        p_arr = np.array(ps)
-        return p_arr / (p_arr.max())
-
-    train['prices'] = train['prices'].apply(normalize)
-    # PRICES
-    prices = np.array(list(train['prices'].values))
-    del train['prices']
-
-    logger.info('Getting impressions')
-    # IMPRESSIONS
-    impressions = np.array(list(train['impressions'].values))
-    del train['impressions']
-
-    logger.info('Getting current_filters')
-    # CURRENT_FILTERS
-    cfilters = np.array(list(train['cfs'].values))
-    del train['cfs']
-
-    logger.info('Getting numerics')
-    # numerics
-    num_cols = ['session_id_size', 'timestamp_dwell_time_prior_clickout', 'last_ref_ind']
-    for c in num_cols:
-        train[c] = train[c].fillna(-1)
-
-    numerics = train[num_cols].values
-    train = train.drop(num_cols, axis=1)
-
-    logger.info('Getting targets')
-    # TARGETS
-    targets = train['target'].values
-    del train['target']
-    return numerics, impressions, prices, cfilters, targets
-
-
 def train(numerics, impressions, prices, cfilters, targets):
     # grab some info on n_cfs
     n_cfs = len(np.load('./cache/filters_mapping.npy').item())
     logger.info(f'Number of unique current_filters is: {n_cfs}')
 
     batch_size = 128
-    n_epochs = 10
+    n_epochs = 500
 
     skf = StratifiedKFold(n_splits=6)
 
@@ -158,5 +112,5 @@ def train(numerics, impressions, prices, cfilters, targets):
 
 
 if __name__ == '__main__':
-    numerics, impressions, prices, cfilters, targets = get_data(nrows=1000000)
+    numerics, impressions, prices, cfilters, targets = create_inputs(nrows=5000000, recompute=False)
     train(numerics, impressions, prices, cfilters, targets)

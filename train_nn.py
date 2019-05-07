@@ -1,10 +1,12 @@
 import numpy as np
-from utils import get_logger, check_dir
-from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
-from sklearn.model_selection import StratifiedKFold
 from datetime import datetime as dt
-from nn_model_simple import build_model
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
 from keras.utils import plot_model
+
+from utils import get_logger, check_dir
+from nn_model_simple import build_model
 from create_nn_train_input import create_train_inputs
 from create_nn_test_input import create_test_inputs
 
@@ -122,8 +124,15 @@ if __name__ == '__main__':
     numerics, impressions, prices, cfilters = create_test_inputs(recompute=False)
     # make predictions on test
     check_dir('./subs')
+    logger.info('Load test sub csv')
+    test_sub = pd.read_csv('./cache/test_sub.csv')
     for m, model in enumerate(models):
+        test_sub_m = test_sub.copy()
+
         logger.info(f'Generating submission from model {m}')
         test_pred = model.predict(x=[numerics, impressions, prices[:, :, None], cfilters], batch_size=2048)
-        # trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
-        np.save(f'./subs/sub{m}.npy', test_pred)
+        test_pred_label = np.argsort(test_pred)[:, ::-1]
+        test_impressions = np.array(list(test_sub_m['impressions']))
+        test_impressions_pred = test_impressions[np.arange(len(test_impressions))[:, None], test_pred_label]
+        test_sub_m['impressions'] = test_impressions_pred
+        test_sub_m.to_csv('sub_m.csv', index=False)

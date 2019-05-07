@@ -51,7 +51,7 @@ def train(numerics, impressions, prices, cfilters, targets):
     logger.info(f'Number of unique current_filters is: {n_cfs}')
 
     batch_size = 128
-    n_epochs = 50
+    n_epochs = 5
 
     skf = StratifiedKFold(n_splits=6)
     models = []
@@ -122,7 +122,7 @@ def train(numerics, impressions, prices, cfilters, targets):
 
 if __name__ == '__main__':
     # first create training inputs
-    numerics, impressions, prices, cfilters, targets = create_train_inputs(nrows=500000, recompute=True)
+    numerics, impressions, prices, cfilters, targets = create_train_inputs(nrows=500000, recompute=False)
     # train the model
     models = train(numerics, impressions, prices, cfilters, targets)
     # get the test inputs

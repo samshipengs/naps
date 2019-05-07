@@ -33,6 +33,7 @@ def create_cfs_mapping(recompute=False):
     check_dir(filepath)
     filename = os.path.join(filepath, 'filters_mapping.npy')
     if os.path.isfile(filename) and not recompute:
+        logger.info(f'Load cfs mapping from existing: {filename}')
         cfs_mapping = np.load(filename).item()
         n_cfs = len(cfs_mapping)
     else:

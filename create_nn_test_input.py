@@ -12,9 +12,9 @@ def flogger(df, name):
     logger.info(f'{name} shape: ({df.shape[0]:,}, {df.shape[1]})')
 
 
-def load_test():
+def load_test(nrows=None):
     # first test load data
-    test = load_data('test')
+    test = load_data('test', nrows=nrows)
     flogger(test, 'raw test')
     # then load the test that we need to submit
     test_sub = load_data('submission_popular')
@@ -85,7 +85,7 @@ def save_cache(arr, name, filepath='./cache'):
     np.save(os.path.join(filepath, name), arr)
 
 
-def create_test_inputs(recompute=False):
+def create_test_inputs(nrows=None, recompute=False):
     filepath = './cache'
     check_dir(filepath)
     filenames = [os.path.join(filepath, f'{i}.npy') for i in ['test_numerics', 'test_impressions', 'test_prices',
@@ -97,7 +97,7 @@ def create_test_inputs(recompute=False):
         numerics, impressions, prices, cfilters, targets = [np.load(f) for f in filenames]
     else:
         logger.info('LOAD TEST')
-        test = load_test()
+        test = load_test(nrows)
         logger.info('COMPUTE SESSION FEATURES')
         test = compute_session_fts(test)
 
@@ -143,7 +143,7 @@ def create_test_inputs(recompute=False):
 
         # create meta ohe
         meta_mapping = np.load('./cache/meta_mapping.npy').item()
-        n_properties = len(meta_mapping)
+        n_properties = len(meta_mapping[list(meta_mapping.keys())[0]])
 
         logger.info('APPLY META OHE MAPPING TO IMPRESSIONS (THIS COULD TAKE SOME TIME)')
         test['impressions'] = (test['impressions']

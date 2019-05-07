@@ -134,5 +134,5 @@ if __name__ == '__main__':
         test_pred_label = np.argsort(test_pred)[:, ::-1]
         test_impressions = np.array(list(test_sub_m['impressions']))
         test_impressions_pred = test_impressions[np.arange(len(test_impressions))[:, None], test_pred_label]
-        test_sub_m['impressions'] = test_impressions_pred
+        test_sub_m['recommendations'] = test_impressions_pred
         test_sub_m.to_csv('sub_m.csv', index=False)

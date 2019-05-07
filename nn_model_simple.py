@@ -14,11 +14,12 @@ def build_model(n_cfs, batch_size, dense_act='relu'):
     numerics_input = Input(shape=(3,), name='numerics_input')
 
     # IMPRESSIONS
+    # Receptive field = nb_stacks_of_residuals_blocks * kernel_size * last_dilation.
     params = {'nb_filters': 32,
               'kernel_size': 3,
               'nb_stacks': 2,
               'padding': 'causal',
-              'dilations': [1, 2, 4],
+              'dilations': [1, 2, 4, 8],
               # 'activation': 'norm_relu',
               'use_skip_connections': True,
               'dropout_rate': 0.3,

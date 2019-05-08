@@ -106,7 +106,7 @@ def create_test_inputs(nrows=None, recompute=False):
         test = test.groupby('session_id').last().reset_index()
 
         test_sub = test[['session_id', 'impressions']]
-        test_sub.to_csv('./cache/test_sub.csv')
+        test_sub.to_csv('./cache/test_sub.csv', index=False)
         del test_sub
 
         logger.info('LOWER CASE CURRENT FILTERS AND SPLIT TO LIST')

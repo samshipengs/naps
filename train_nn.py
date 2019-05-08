@@ -1,9 +1,11 @@
+import os
 import numpy as np
 from datetime import datetime as dt
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold
 from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
 from keras.utils import plot_model
+from keras.models import load_model
 
 from utils import get_logger, check_dir
 from nn_model_simple import build_model
@@ -51,7 +53,7 @@ def train(numerics, impressions, prices, cfilters, targets):
     logger.info(f'Number of unique current_filters is: {n_cfs}')
 
     batch_size = 128
-    n_epochs = 5
+    n_epochs = 1
 
     skf = StratifiedKFold(n_splits=6)
     models = []
@@ -75,35 +77,39 @@ def train(numerics, impressions, prices, cfilters, targets):
 
         # =====================================================================================
         # create model
-        model = build_model(n_cfs, batch_size)
+        model_filename = f'./models/cv{fold}.model'
+        if os.path.isfile(model_filename):
+            logger.info(f'Loading model from existing {model_filename}')
+            model = load_model(model_filename)
+        else:
+            model = build_model(n_cfs, batch_size)
 
-        # print out model info
-        nparams = model.count_params()
-        logger.info((f'train len: {len(y_trn):,} | val len: {len(y_val):,} '
-                     f'| numer of parameters: {nparams:,} | train_len/nparams={len(y_trn) / nparams:.5f}'))
-        logger.info(f'{model.summary()}')
-        check_dir('./models')
-        plot_model(model, to_file='./models/model.png')
-        # add some callbacks
-        model_file = f'./models/cv{fold}.model'
-        callbacks = [ModelCheckpoint(model_file, save_best_only=True, verbose=1)]
-        log_dir = "logs/{}".format(dt.now().strftime('%m-%d-%H-%M'))
-        tb = TensorBoard(log_dir=log_dir, write_graph=True, write_grads=True)
-        callbacks.append(tb)
-        # simple early stopping
-        es = EarlyStopping(monitor='val_loss', mode='min', patience=100, verbose=1)
-        callbacks.append(es)
-        # rp
-        rp = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=100, verbose=1)
-        callbacks.append(rp)
+            # print out model info
+            nparams = model.count_params()
+            logger.info((f'train len: {len(y_trn):,} | val len: {len(y_val):,} '
+                         f'| numer of parameters: {nparams:,} | train_len/nparams={len(y_trn) / nparams:.5f}'))
+            logger.info(f'{model.summary()}')
+            check_dir('./models')
+            plot_model(model, to_file='./models/model.png')
+            # add some callbacks
+            callbacks = [ModelCheckpoint(model_filename, save_best_only=True, verbose=1)]
+            log_dir = './logs/{}'.format(dt.now().strftime('%m-%d-%H-%M'))
+            tb = TensorBoard(log_dir=log_dir, write_graph=True, write_grads=True)
+            callbacks.append(tb)
+            # simple early stopping
+            es = EarlyStopping(monitor='val_loss', mode='min', patience=100, verbose=1)
+            callbacks.append(es)
+            # rp
+            rp = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=100, verbose=1)
+            callbacks.append(rp)
 
-        history = model.fit_generator(train_gen,
-                                      steps_per_epoch=len(y_trn) // batch_size,
-                                      epochs=n_epochs,
-                                      verbose=1,
-                                      callbacks=callbacks,
-                                      validation_data=val_gen,
-                                      validation_steps=len(y_val) // batch_size)
+            history = model.fit_generator(train_gen,
+                                          steps_per_epoch=len(y_trn) // batch_size,
+                                          epochs=n_epochs,
+                                          verbose=1,
+                                          callbacks=callbacks,
+                                          validation_data=val_gen,
+                                          validation_steps=len(y_val) // batch_size)
 
         # make prediction
         #      [numerics_batch, impressions_batch, prices_batch[:, :, None], cfilters_batch]
@@ -114,7 +120,7 @@ def train(numerics, impressions, prices, cfilters, targets):
         val_pred = model.predict(x=[val_numerics, val_imp, val_price[:, :, None], val_cfilter], batch_size=1024)
         val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
         val_mrr = np.mean(1 / (val_pred_label + 1))
-        print(f'train mrr: {trn_mrr:.2f} | val mrr: {val_mrr:.2f}')
+        logger.info(f'train mrr: {trn_mrr:.2f} | val mrr: {val_mrr:.2f}')
         models.append(model)
         break
     return models
@@ -122,11 +128,11 @@ def train(numerics, impressions, prices, cfilters, targets):
 
 if __name__ == '__main__':
     # first create training inputs
-    numerics, impressions, prices, cfilters, targets = create_train_inputs(nrows=500000, recompute=False)
+    numerics, impressions, prices, cfilters, targets = create_train_inputs(nrows=5000000, recompute=False)
     # train the model
     models = train(numerics, impressions, prices, cfilters, targets)
     # get the test inputs
-    numerics, impressions, prices, cfilters = create_test_inputs(recompute=False)
+    numerics, impressions, prices, cfilters = create_test_inputs(recompute=True)
     # make predictions on test
     check_dir('./subs')
     logger.info('Load test sub csv')
@@ -135,9 +141,21 @@ if __name__ == '__main__':
         test_sub_m = test_sub.copy()
 
         logger.info(f'Generating submission from model {m}')
-        test_pred = model.predict(x=[numerics, impressions, prices[:, :, None], cfilters], batch_size=2048)
+        test_pred = model.predict(x=[numerics, impressions, prices[:, :, None], cfilters], batch_size=1024)
         test_pred_label = np.argsort(test_pred)[:, ::-1]
-        test_impressions = np.array(list(test_sub_m['impressions']))
+        np.save(f'./models/test_pred_label{m}.npy', test_pred_label)
+
+        # pad to 25
+        test_sub_m['impressions'] = test_sub_m['impressions'].str.split('|')
+        print(test_sub_m['impressions'].str.len().describe())
+        test_sub_m['impressions'] = test_sub_m['impressions'].apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant'))
+        test_impressions = np.array(list(test_sub_m['impressions'].values))
+
         test_impressions_pred = test_impressions[np.arange(len(test_impressions))[:, None], test_pred_label]
         test_sub_m['recommendations'] = test_impressions_pred
+
+        # filter away the 0 padding
+        test_sub_m['recommendations'] = test_sub_m['recommendations'].apply(lambda recs: [i for i in recs if i != 0])
+        test_sub_m['recommendations'] = test_sub_m['recommendations'].apply(' '.join)
         test_sub_m.to_csv('sub_m.csv', index=False)
+

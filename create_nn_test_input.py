@@ -90,12 +90,12 @@ def create_test_inputs(nrows=None, recompute=False):
     filepath = './cache'
     check_dir(filepath)
     filenames = [os.path.join(filepath, f'{i}.npy') for i in ['test_numerics', 'test_impressions', 'test_prices',
-                                                              'test_cfilters', 'test_targets']]
+                                                              'test_cfilters']]
     if sum([os.path.isfile(f) for f in filenames]) == len(filenames) and not recompute:
         logger.info(f'LOAD FROM EXISTING {filenames}')
         # test = pd.read_parquet(filename)
         # test = pd.read_hdf(filename, 'test')
-        numerics, impressions, prices, cfilters, targets = [np.load(f) for f in filenames]
+        numerics, impressions, prices, cfilters = [np.load(f) for f in filenames]
     else:
         logger.info('LOAD TEST')
         test = load_test(nrows)
@@ -104,6 +104,10 @@ def create_test_inputs(nrows=None, recompute=False):
 
         logger.info('ONLY SELECT LAST CLICKOUT FROM EACH SESSION')
         test = test.groupby('session_id').last().reset_index()
+
+        test_sub = test[['session_id', 'impressions']]
+        test_sub.to_csv('./cache/test_sub.csv')
+        del test_sub
 
         logger.info('LOWER CASE CURRENT FILTERS AND SPLIT TO LIST')
         test['cfs'] = test['current_filters_last_filters'].str.lower().str.split('|')
@@ -116,9 +120,6 @@ def create_test_inputs(nrows=None, recompute=False):
 
         logger.info('SPLIT IMPRESSION STR TO LIST OF IMPRESSIONS')
         test['impressions'] = test['impressions'].str.split('|')
-        test_sub = test[['session_id', 'impressions']]
-        test_sub.to_csv('./cache/test_sub.csv')
-        del test_sub
 
         logger.info('CONVERT IMPRESSION STR TO INT')
         test['impressions'] = test['impressions'].apply(lambda x: [int(i) for i in x])

@@ -174,7 +174,8 @@ def train(numerics, impressions, prices, cfilters, targets, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 1000000}
+    # setup = {'nrows': 1000000}
+    setup = {'nrows': None}
 
     # first create training inputs
     numerics, impressions, prices, cfilters, targets = create_train_inputs(nrows=setup['nrows'], recompute=False)

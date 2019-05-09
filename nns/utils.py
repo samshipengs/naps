@@ -1,9 +1,6 @@
-import numpy as np
 import pandas as pd
 import subprocess
-import sys
 import os
-import matplotlib.pyplot as plt
 import warnings
 import multiprocessing
 import logging
@@ -25,35 +22,14 @@ def check_dir(dirs):
             os.makedirs(dirs)
 
 
-class LoggerWriter:
-    def __init__(self, level):
-        # self.level is really like using log.debug(message)
-        # at least in my case
-        self.level = level
-
-    def write(self, message):
-        # if statement reduces the amount of newlines that are
-        # printed to the logger
-        if message != '\n':
-            self.level(message)
-
-    def flush(self):
-        # create a flush method so things can be flushed when
-        # the system wants to. Not sure if simply 'printing'
-        # sys.stderr is the correct way to do it, but it seemed
-        # to work properly for me.
-        self.level(sys.stderr)
-
-
 def get_logger(name):
     logger_path = './loggers'
     check_dir(logger_path)
 
     # add logging
     logger = logging.getLogger(name)
-    sys.stdout = LoggerWriter(logger.debug)
-    sys.stderr = LoggerWriter(logger.warning)
     logger.setLevel(logging.INFO)
+
     # https://stackoverflow.com/questions/6729268/log-messages-appearing-twice-with-python-logging
     if not logger.handlers:
         # create a file handler

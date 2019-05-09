@@ -10,7 +10,7 @@ from keras.utils import plot_model
 from keras.models import load_model
 
 from utils import get_logger, check_dir
-from nn_model_simple import build_model
+from nn_model import build_model
 from create_nn_train_input import create_train_inputs
 from create_nn_test_input import create_test_inputs
 
@@ -55,6 +55,7 @@ def plot_hist(pred_label, true_label, name):
     _ = plt.legend()
     check_dir('./plots')
     plt.savefig(f'./plots/{name}_hist.png')
+    plt.gcf().clear()
 
 
 def confusion_matrix(y_pred, y_true, name, normalize='row', level=0, log_scale=False):
@@ -89,6 +90,7 @@ def confusion_matrix(y_pred, y_true, name, normalize='row', level=0, log_scale=F
     _ = ax.set_yticklabels(list(mat.index.astype(str)))
     check_dir('./plots')
     plt.savefig(f'./plots/{name}_confusion_matrix.png')
+    plt.gcf().clear()
 
 
 def train(numerics, impressions, prices, cfilters, targets, retrain=False):
@@ -108,16 +110,12 @@ def train(numerics, impressions, prices, cfilters, targets, retrain=False):
         trn_cfilter, val_cfilter = cfilters[trn_ind], cfilters[val_ind]
         y_trn, y_val = targets[trn_ind], targets[val_ind]
 
-        # create data generator numerics, impressions, prices, cfilters, targets, batchsize
-        # return [numerics_batch, impressions_batch, prices_batch[:, :, None], cfilters_batch]
+        # data generator
         train_gen = iterate_minibatches(trn_numerics, trn_imp, trn_price, trn_cfilter, y_trn,
                                         batch_size, shuffle=True)
 
         val_gen = iterate_minibatches(val_numerics, val_imp, val_price, val_cfilter, y_val,
                                       batch_size, shuffle=False)
-        #     TEMP
-        #     del impressions, prices, cities, platforms, devices
-        #     gc.collect()
 
         # =====================================================================================
         # create model
@@ -156,7 +154,6 @@ def train(numerics, impressions, prices, cfilters, targets, retrain=False):
                                           validation_steps=len(y_val) // batch_size)
 
         # make prediction
-        # [numerics_batch, impressions_batch, prices_batch[:, :, None], cfilters_batch]
         trn_pred = model.predict(x=[trn_numerics, trn_imp, trn_price[:, :, None], trn_cfilter], batch_size=1024)
         trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
         plot_hist(trn_pred_label, y_trn, 'train')
@@ -177,8 +174,10 @@ def train(numerics, impressions, prices, cfilters, targets, retrain=False):
 
 
 if __name__ == '__main__':
+    setup = {'nrows': 1000000}
+
     # first create training inputs
-    numerics, impressions, prices, cfilters, targets = create_train_inputs(nrows=5000000, recompute=False)
+    numerics, impressions, prices, cfilters, targets = create_train_inputs(nrows=setup['nrows'], recompute=False)
     # train the model
     models = train(numerics, impressions, prices, cfilters, targets, retrain=True)
     # get the test inputs

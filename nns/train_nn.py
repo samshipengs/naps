@@ -180,14 +180,14 @@ if __name__ == '__main__':
     # first create training inputs
     numerics, impressions, prices, cfilters, targets = create_train_inputs(nrows=setup['nrows'], recompute=False)
     # train the model
-    models = train(numerics, impressions, prices, cfilters, targets, retrain=True)
+    models = train(numerics, impressions, prices, cfilters, targets, retrain=False)
     # get the test inputs
     numerics, impressions, prices, cfilters = create_test_inputs(recompute=False)
     # make predictions on test
     check_dir('./subs')
     logger.info('Load test sub csv')
     test_sub = pd.read_csv('./cache/test_sub.csv')
-    sub_popular = pd.read_csv('./data/submission_popular.csv')
+    sub_popular = pd.read_csv('../data/submission_popular.csv')
     sub_columns = sub_popular.columns
 
     # filter away the 0 padding and join list recs to string

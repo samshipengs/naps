@@ -1,3 +1,4 @@
+import time
 import pandas as pd
 import numpy as np
 import datetime, os, gc
@@ -5,7 +6,7 @@ from utils import load_data, get_logger, check_dir
 from clean_session import preprocess_sessions
 
 
-logger = get_logger('create_nn_input')
+logger = get_logger('create_nn_train__input')
 
 
 def flogger(df, name):
@@ -102,7 +103,7 @@ def save_cache(arr, name, filepath='./cache'):
     np.save(os.path.join(filepath, name), arr)
 
 
-def create_train_inputs(nrows=100000, recompute=False):
+def create_train_inputs(nrows=100000, padding=True, recompute=False):
     filepath = './cache'
     check_dir(filepath)
     filenames = [os.path.join(filepath, f'{i}.npy') for i in ['train_numerics', 'train_impressions', 'train_prices',
@@ -114,6 +115,7 @@ def create_train_inputs(nrows=100000, recompute=False):
         numerics, impressions, prices, cfilters, targets = [np.load(f) for f in filenames]
     else:
         logger.info('LOAD TRAIN')
+        t_init = time.time()
         train = load_train(nrows)
         logger.info('COMPUTE SESSION FEATURES')
         train = compute_session_fts(train)
@@ -127,8 +129,9 @@ def create_train_inputs(nrows=100000, recompute=False):
         logger.info('SPLIT PRICES STR TO LIST AND CONVERT TO INT')
         train['prices'] = train['prices'].str.split('|')
         train['prices'] = train['prices'].apply(lambda x: [int(p) for p in x])
-        logger.info('PAD 0S FOR LENGTH SHORTER THAN 25 (HMM)')
-        train['prices'] = train.prices.apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant'))
+        if padding:
+            logger.info('PAD 0S FOR LENGTH SHORTER THAN 25 (HMM)')
+            train['prices'] = train.prices.apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant'))
 
         logger.info('SPLIT IMPRESSION STR TO LIST OF IMPRESSIONS')
         train['impressions'] = train['impressions'].str.split('|')
@@ -136,8 +139,9 @@ def create_train_inputs(nrows=100000, recompute=False):
         train['impressions'] = train['impressions'].apply(lambda x: [int(i) for i in x])
         logger.info('CONVERT REFERENCE ID TO INT')
         train['reference'] = train['reference'].astype(int)
-        logger.info('PAD 0S FOR LENGTH SHORTER THAN 25 (HMM)')
-        train['impressions'] = train['impressions'].apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant'))
+        if padding:
+            logger.info('PAD 0S FOR LENGTH SHORTER THAN 25 (HMM)')
+            train['impressions'] = train['impressions'].apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant'))
 
         logger.info('ASSIGN TARGET')
 
@@ -268,15 +272,13 @@ def create_train_inputs(nrows=100000, recompute=False):
         targets = train['target'].values
         del train['target']
         save_cache(targets, 'train_targets.npy')
+        logger.info(f'Total train data input creation took: {(time.time()-t_init)/60:.2f} mins')
 
     return numerics, impressions, prices, cfilters, targets
 
 
 def pipeline():
     _ = create_train_inputs(nrows=1000000)
-
-
-
 
 
 if __name__ == '__main__':

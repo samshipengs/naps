@@ -1,3 +1,4 @@
+import time
 import pandas as pd
 import numpy as np
 import datetime, os, gc
@@ -6,7 +7,7 @@ from clean_session import preprocess_sessions
 from create_nn_train_input import create_cfs_mapping
 
 
-logger = get_logger('create_nn_input')
+logger = get_logger('create_nn_test_input')
 
 
 def flogger(df, name):
@@ -98,6 +99,7 @@ def create_test_inputs(nrows=None, recompute=False):
         numerics, impressions, prices, cfilters = [np.load(f) for f in filenames]
     else:
         logger.info('LOAD TEST')
+        t_init = time.time()
         test = load_test(nrows)
         logger.info('COMPUTE SESSION FEATURES')
         test = compute_session_fts(test)
@@ -206,6 +208,7 @@ def create_test_inputs(nrows=None, recompute=False):
         numerics = test[num_cols].values
         test = test.drop(num_cols, axis=1)
         save_cache(numerics, 'test_numerics.npy')
+        logger.info(f'Total test data input creation took: {(time.time()-t_init)/60:.2f} mins')
 
     return numerics, impressions, prices, cfilters
 

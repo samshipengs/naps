@@ -23,30 +23,52 @@ TO_DO = ('1) maybe fillna -1 is too overwhelming for last_reference_id_index if 
 logger.info(TO_DO)
 
 
-def iterate_minibatches(numerics, impressions, prices, cfilters, targets,
-                        batch_size, shuffle=True):
-    # default we will shuffle
-    indices = np.arange(len(targets))
+def get_steps(seq, batch_size):
+    sizes = np.array([len(i) for i in seq])
+    # unique_sizes = np.array(list(set(sizes)))
+    size_ctn = pd.value_counts(sizes)
+    # get remainder
+    remainder = size_ctn % batch_size
+    # the integer gives the complete cycle of number of batch_size,
+    # if the remainder is not 0 then it means there will be one more
+    return (size_ctn//batch_size + (remainder != 0).astype(int)).sum()
+
+
+def iterate_minibatches(numerics, impressions, prices, cfilters, targets, batch_size, shuffle=True):
+
+    sizes = np.array([len(i) for i in prices])
+    unique_sizes = np.array(list(set(sizes)))
+
     while True:
         if shuffle:
-            np.random.shuffle(indices)
+            np.random.shuffle(unique_sizes)
 
-        remainder = len(targets) % batch_size
-        for start_idx in range(0, len(targets), batch_size):
-            if remainder != 0 and start_idx + batch_size >= len(targets):
-                excerpt = indices[len(targets) - batch_size:len(targets)]
-            else:
-                excerpt = indices[start_idx:start_idx + batch_size]
+        # going over each sizes
+        for s in unique_sizes:
+            mask = sizes == s
+            targets_s = targets[mask]
+            # number of records in this bucket
+            n_s = len(targets_s)
+            indices = np.arange(n_s)
+            if shuffle:
+                np.random.shuffle(indices)
 
-            numerics_batch = numerics[excerpt]
-            impressions_batch = impressions[excerpt]
-            prices_batch = prices[excerpt]
-            cfilters_batch = cfilters[excerpt]
-            targets_batch = targets[excerpt]
+            remainder = n_s % batch_size
+            for start_idx in range(0, n_s, batch_size):
+                if remainder != 0 and start_idx + batch_size >= n_s:
+                    excerpt = indices[n_s-batch_size:n_s]
+                else:
+                    excerpt = indices[start_idx:start_idx + batch_size]
 
-            prices_batch = np.array([i.reshape(-1, 1) for i in prices_batch])
-            yield ([numerics_batch, impressions_batch, prices_batch,
-                    cfilters_batch], targets_batch)
+                numerics_batch = numerics[mask][excerpt]
+                impressions_batch = np.array(list(impressions[mask][excerpt]))
+                prices_batch = np.array(list(prices[mask][excerpt]))[:, :, None]
+                cfilters_batch = cfilters[mask][excerpt]
+                targets_batch = targets[mask][excerpt]
+
+                # prices_batch = np.array([i.reshape(-1, 1) for i in prices_batch])
+                yield ([numerics_batch, impressions_batch, prices_batch,
+                        cfilters_batch], targets_batch)
 
 
 def train(numerics, impressions, prices, cfilters, targets, params, retrain=False):
@@ -107,28 +129,32 @@ def train(numerics, impressions, prices, cfilters, targets, params, retrain=Fals
             rp = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=30, verbose=1)
             callbacks.append(rp)
 
+            train_steps = get_steps(trn_price, batch_size)
+            val_steps = get_steps(val_price, batch_size)
+            logger.info(f'Train steps: {train_steps} | val steps: {val_steps}')
             history = model.fit_generator(train_gen,
-                                          steps_per_epoch=len(y_trn) // batch_size,
+                                          # steps_per_epoch=len(y_trn) // batch_size,
+                                          steps_per_epoch=train_steps,
                                           epochs=n_epochs,
                                           verbose=1,
                                           callbacks=callbacks,
                                           validation_data=val_gen,
-                                          validation_steps=len(y_val) // batch_size)
-
-        # make prediction
-        trn_pred = model.predict(x=[trn_numerics, trn_imp, trn_price[:, :, None], trn_cfilter], batch_size=1024)
-        trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
-        plot_hist(trn_pred_label, y_trn, 'train')
-        confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
-
-        trn_mrr = np.mean(1 / (trn_pred_label + 1))
-
-        val_pred = model.predict(x=[val_numerics, val_imp, val_price[:, :, None], val_cfilter], batch_size=1024)
-        val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
-        plot_hist(val_pred_label, y_val, 'validation')
-        confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
-        val_mrr = np.mean(1 / (val_pred_label + 1))
-        logger.info(f'train mrr: {trn_mrr:.2f} | val mrr: {val_mrr:.2f}')
+                                          # validation_steps=len(y_val) // batch_size)
+                                          validation_steps=val_steps)
+        # # make prediction
+        # trn_pred = model.predict(x=[trn_numerics, trn_imp, trn_price, trn_cfilter], batch_size=1024)
+        # trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
+        # plot_hist(trn_pred_label, y_trn, 'train')
+        # confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
+        #
+        # trn_mrr = np.mean(1 / (trn_pred_label + 1))
+        #
+        # val_pred = model.predict(x=[val_numerics, val_imp, val_price, val_cfilter], batch_size=1024)
+        # val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
+        # plot_hist(val_pred_label, y_val, 'validation')
+        # confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
+        # val_mrr = np.mean(1 / (val_pred_label + 1))
+        # logger.info(f'train mrr: {trn_mrr:.2f} | val mrr: {val_mrr:.2f}')
 
         models.append(model)
         break
@@ -146,11 +172,12 @@ if __name__ == '__main__':
               'model_params': None}
     # logger.info(pprint.pformat(setup))
     # logger.info(pprint.pformat(params))
-    logger.info(f"\nSetup\n{'='*20}\n{setup}\n{'='*20}")
-    logger.info(f"\nParams\n{'='*20}\n{params}\n{'='*20}")
+    logger.info(f"Setup\n{'='*20}\n{setup}\n{'='*20}")
+    logger.info(f"Params\n{'='*20}\n{params}\n{'='*20}")
 
     # first create training inputs
     numerics, impressions, prices, cfilters, targets = create_train_inputs(nrows=setup['nrows'],
+                                                                           padding=False,
                                                                            recompute=setup['recompute_train'])
     # train the model
     models = train(numerics, impressions, prices, cfilters, targets, params=params, retrain=setup['retrain'])

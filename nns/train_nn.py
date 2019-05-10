@@ -1,7 +1,7 @@
 import os
+import time
 import numpy as np
 from datetime import datetime as dt
-import matplotlib.pyplot as plt
 
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold
@@ -13,7 +13,7 @@ from utils import get_logger, check_dir
 from nn_model import build_model
 from create_nn_train_input import create_train_inputs
 from create_nn_test_input import create_test_inputs
-
+from plots import plot_hist, confusion_matrix
 
 logger = get_logger('train_nn')
 
@@ -23,93 +23,103 @@ TO_DO = ('1) maybe fillna -1 is too overwhelming for last_reference_id_index if 
 logger.info(TO_DO)
 
 
+# def iterate_minibatches(numerics, impressions, prices, cfilters, targets,
+#                         batch_size, shuffle=True):
+#     # default we will shuffle
+#     indices = np.arange(len(targets))
+#     while True:
+#         if shuffle:
+#             np.random.shuffle(indices)
+#
+#         remainder = len(targets) % batch_size
+#         for start_idx in range(0, len(targets), batch_size):
+#             if remainder != 0 and start_idx + batch_size >= len(targets):
+#                 excerpt = indices[len(targets) - batch_size:len(targets)]
+#             else:
+#                 excerpt = indices[start_idx:start_idx + batch_size]
+#
+#             numerics_batch = numerics[excerpt]
+#             impressions_batch = impressions[excerpt]
+#             prices_batch = prices[excerpt]
+#             cfilters_batch = cfilters[excerpt]
+#             targets_batch = targets[excerpt]
+#
+#             prices_batch = np.array([i.reshape(-1, 1) for i in prices_batch])
+#             yield ([numerics_batch, impressions_batch, prices_batch,
+#                     cfilters_batch], targets_batch)
+
+
+def get_steps(seq, batch_size):
+    sizes = np.array([len(i) for i in seq])
+    # unique_sizes = np.array(list(set(sizes)))
+    size_ctn = pd.value_counts(sizes)
+    # get remainder
+    remainder = size_ctn % batch_size
+    # the integer gives the complete cycle of number of batch_size,
+    # if the remainder is not 0 then it means there will be one more
+    return (size_ctn//batch_size + (remainder != 0).astype(int)).sum()
+
+
 def iterate_minibatches(numerics, impressions, prices, cfilters, targets,
                         batch_size, shuffle=True):
-    # default we will shuffle
-    indices = np.arange(len(targets))
+
+    sizes = np.array([len(i) for i in prices])
+    unique_sizes = np.array(list(set(sizes)))
+
     while True:
         if shuffle:
-            np.random.shuffle(indices)
+            np.random.shuffle(unique_sizes)
 
-        remainder = len(targets) % batch_size
-        for start_idx in range(0, len(targets), batch_size):
-            if remainder != 0 and start_idx + batch_size >= len(targets):
-                excerpt = indices[len(targets) - batch_size:len(targets)]
-            else:
-                excerpt = indices[start_idx:start_idx + batch_size]
+        # going over each sizes
+        for s in unique_sizes:
+            mask = sizes == s
+            targets_s = targets[mask]
+            # number of records in this bucket
+            n_s = len(targets_s)
+            indices = np.arange(n_s)
+            if shuffle:
+                np.random.shuffle(indices)
 
-            numerics_batch = numerics[excerpt]
-            impressions_batch = impressions[excerpt]  # .reshape(batch_size, -1, 157)
-            prices_batch = prices[excerpt]  # .reshape(batch_size, -1, 1)
-            cfilters_batch = cfilters[excerpt]
-            targets_batch = targets[excerpt]
+            remainder = n_s % batch_size
+            for start_idx in range(0, n_s, batch_size):
+                if remainder != 0 and start_idx + batch_size >= n_s:
+                    excerpt = indices[n_s-batch_size:n_s]
+                else:
+                    excerpt = indices[start_idx:start_idx + batch_size]
 
-            prices_batch = np.array([i.reshape(-1, 1) for i in prices_batch])
-            yield ([numerics_batch, impressions_batch, prices_batch,
-                    cfilters_batch], targets_batch)
+                numerics_batch = numerics[mask][excerpt]
+                impressions_batch = impressions[mask][excerpt]
+                prices_batch = prices[mask][excerpt]
+                cfilters_batch = cfilters[mask][excerpt]
+                targets_batch = targets[mask][excerpt]
 
-
-def plot_hist(pred_label, true_label, name):
-    _ = plt.hist(pred_label, bins=50, label=f'{name}_pred', alpha=0.7)
-    _ = plt.hist(true_label, bins=50, label = f'{name} label', alpha=0.7)
-    _ = plt.legend()
-    check_dir('./plots')
-    plt.savefig(f'./plots/{name}_hist.png')
-    plt.gcf().clear()
-
-
-def confusion_matrix(y_pred, y_true, name, normalize='row', level=0, log_scale=False):
-    compare = pd.DataFrame({'prediction': y_pred, 'y_true': y_true})
-    counts = compare.groupby('y_true')['prediction'].value_counts()
-    mat = counts.unstack(level=level)
-    mat.fillna(0, inplace=True)
-
-    if normalize == 'row':
-        row_sum = mat.sum(axis=1)
-        mat = mat.div(row_sum, axis=0)
-        log_scale = False
-    elif normalize == 'column':
-        col_sum = mat.sum(axis=0)
-        mat = mat.div(col_sum, axis=1)
-        log_scale = False
-    # plot
-    fig = plt.figure(figsize=(35, 10))
-    ax = fig.add_subplot(111)
-    if log_scale:
-        cax = ax.matshow(np.log1p(mat), interpolation='nearest')  # , cmap='coolwarm')#, aspect='auto')
-    else:
-        cax = ax.matshow(mat, interpolation='nearest')  # , cmap='coolwarm')#, aspect='auto')
-    fig.colorbar(cax)
-    ax.set_xlabel(f'{mat.columns.name}')
-    ax.xaxis.set_label_position('top')
-    ax.set_ylabel(f'{mat.index.name}')
-
-    ax.set_xticks(np.arange(mat.shape[1]))
-    ax.set_xticklabels(list(mat.columns.astype(str)), rotation=90)
-    ax.set_yticks(np.arange(mat.shape[0]))
-    _ = ax.set_yticklabels(list(mat.index.astype(str)))
-    check_dir('./plots')
-    plt.savefig(f'./plots/{name}_confusion_matrix.png')
-    plt.gcf().clear()
+                prices_batch = np.array([i.reshape(-1, 1) for i in prices_batch])
+                yield ([numerics_batch, impressions_batch, prices_batch,
+                        cfilters_batch], targets_batch)
 
 
-def train(numerics, impressions, prices, cfilters, targets, retrain=False):
-    # grab some info on n_cfs
+def train(numerics, impressions, prices, cfilters, targets, params, retrain=False):
+    # grab some info on n_cfs, this is used to create the filters ohe
     n_cfs = len(np.load('./cache/filters_mapping.npy').item())
     logger.info(f'Number of unique current_filters is: {n_cfs}')
 
-    batch_size = 128
-    n_epochs = 100
+    batch_size = params['batch_size']
+    n_epochs = params['n_epochs']
+    model_params = params['model_params']
 
     skf = StratifiedKFold(n_splits=6)
     models = []
+    report = {}
+    t_init = time.time()
     for fold, (trn_ind, val_ind) in enumerate(skf.split(targets, targets)):
+        report_fold = {}
         trn_numerics, val_numerics = numerics[trn_ind], numerics[val_ind]
         trn_imp, val_imp = impressions[trn_ind], impressions[val_ind]
         trn_price, val_price = prices[trn_ind], prices[val_ind]
         trn_cfilter, val_cfilter = cfilters[trn_ind], cfilters[val_ind]
         y_trn, y_val = targets[trn_ind], targets[val_ind]
-
+        report_fold['train_len'] = len(y_trn)
+        report_fold['val_len'] = len(y_val)
         # data generator
         train_gen = iterate_minibatches(trn_numerics, trn_imp, trn_price, trn_cfilter, y_trn,
                                         batch_size, shuffle=True)
@@ -124,12 +134,13 @@ def train(numerics, impressions, prices, cfilters, targets, retrain=False):
             logger.info(f'Loading model from existing {model_filename}')
             model = load_model(model_filename)
         else:
-            model = build_model(n_cfs, batch_size)
+            model = build_model(n_cfs)
 
             # print out model info
             nparams = model.count_params()
+            report['nparams'] = nparams
             logger.info((f'train len: {len(y_trn):,} | val len: {len(y_val):,} '
-                         f'| numer of parameters: {nparams:,} | train_len/nparams={len(y_trn) / nparams:.5f}'))
+                         f'| number of parameters: {nparams:,} | train_len/nparams={len(y_trn) / nparams:.5f}'))
             logger.info(f'{model.summary()}')
             check_dir('./models')
             plot_model(model, to_file='./models/model.png')
@@ -170,19 +181,30 @@ def train(numerics, impressions, prices, cfilters, targets, retrain=False):
 
         models.append(model)
         break
+    logger.info(f'Total time took: {(time.time()-t_init)/60:.2f} mins')
     return models
 
 
 if __name__ == '__main__':
-    # setup = {'nrows': 1000000}
-    setup = {'nrows': None}
+    setup = {'nrows': 5000000,
+             'recompute_train': False,
+             'retrain': True,
+             'recompute_test': False}
+    params = {'batch_size': 128,
+              'n_epochs': 100,
+              'model_params': None}
+    # logger.info(pprint.pformat(setup))
+    # logger.info(pprint.pformat(params))
+    logger.info(f"Setup\n{'='*20}\n{setup}\n{'='*20}")
+    logger.info(f"Params\n{'='*20}\n{params}\n{'='*20}")
 
     # first create training inputs
-    numerics, impressions, prices, cfilters, targets = create_train_inputs(nrows=setup['nrows'], recompute=False)
+    numerics, impressions, prices, cfilters, targets = create_train_inputs(nrows=setup['nrows'],
+                                                                           recompute=setup['recompute_train'])
     # train the model
-    models = train(numerics, impressions, prices, cfilters, targets, retrain=False)
+    models = train(numerics, impressions, prices, cfilters, targets, params=params, retrain=setup['retrain'])
     # get the test inputs
-    numerics, impressions, prices, cfilters = create_test_inputs(recompute=False)
+    numerics, impressions, prices, cfilters = create_test_inputs(recompute=setup['recompute_test'])
     # make predictions on test
     check_dir('./subs')
     logger.info('Load test sub csv')

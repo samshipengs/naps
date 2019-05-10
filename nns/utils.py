@@ -67,15 +67,6 @@ def ignore_warnings():
     warnings.filterwarnings('ignore', category=UserWarning)
 
 
-def pshape(df, name='df'):
-    """
-    Print df shape with , separated
-    :param df:
-    :return:
-    """
-    print(f'[>>>>>] {name} shape: ({df.shape[0]:,}, {df.shape[1]})')
-
-
 def load_data(data_soruce, data_path='../data/', nrows=None, verbose=False, **kwargs):
     """
     Load csv files as dataframe

@@ -2,10 +2,11 @@ import os
 import numpy as np
 from functools import partial
 import pandas as pd
-from utils import get_logger, check_dir
+from utils import get_logger, check_dir, get_data_path
 
 
 logger = get_logger('clean_session')
+Filepath = get_data_path()
 
 
 # 0)
@@ -46,7 +47,7 @@ def filter_clickout(grp, data_source='train'):
 
 
 def preprocess_sessions(df, data_source='train', drop_duplicates=True, save=True, recompute=False):
-    filepath = './cache'
+    filepath = Filepath.cache_path
     check_dir(filepath)
     filename = os.path.join(filepath, f'preprocessed_{data_source}.snappy')
     if os.path.isfile(filename) and not recompute:

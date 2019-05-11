@@ -2,12 +2,13 @@ import time
 import pandas as pd
 import numpy as np
 import datetime, os, gc
-from utils import load_data, get_logger, check_dir
+from utils import load_data, get_logger, check_dir, get_data_path
 from clean_session import preprocess_sessions
 from create_nn_train_input import create_cfs_mapping
 
 
 logger = get_logger('create_nn_test_input')
+Filepath = get_data_path()
 
 
 def flogger(df, name):
@@ -83,12 +84,13 @@ def compute_session_fts(df):
     return pd.merge(df, session_fts, on='session_id')
 
 
-def save_cache(arr, name, filepath='./cache'):
+def save_cache(arr, name):
+    filepath = Filepath.cache_path
     np.save(os.path.join(filepath, name), arr)
 
 
 def create_test_inputs(nrows=None, recompute=False):
-    filepath = './cache'
+    filepath = Filepath.cache_path
     check_dir(filepath)
     filenames = [os.path.join(filepath, f'{i}.npy') for i in ['test_numerics', 'test_impressions', 'test_prices',
                                                               'test_cfilters']]
@@ -108,7 +110,7 @@ def create_test_inputs(nrows=None, recompute=False):
         test = test.groupby('session_id').last().reset_index()
 
         test_sub = test[['session_id', 'impressions']]
-        test_sub.to_csv('./cache/test_sub.csv', index=False)
+        test_sub.to_csv(os.path.join(filepath, 'test_sub.csv'), index=False)
         del test_sub
 
         logger.info('LOWER CASE CURRENT FILTERS AND SPLIT TO LIST')
@@ -147,7 +149,7 @@ def create_test_inputs(nrows=None, recompute=False):
         test['last_ref_ind'] = test.apply(assign_last_ref_id, axis=1)
 
         # create meta ohe
-        meta_mapping = np.load('./cache/meta_mapping.npy').item()
+        meta_mapping = np.load(os.path.join(filepath, 'meta_mapping.npy')).item()
         n_properties = len(meta_mapping[list(meta_mapping.keys())[0]])
 
         logger.info('APPLY META OHE MAPPING TO IMPRESSIONS (THIS COULD TAKE SOME TIME)')
@@ -159,8 +161,6 @@ def create_test_inputs(nrows=None, recompute=False):
         del meta_mapping
         gc.collect()
 
-        # cfs_mapping = np.load('./cache/filters_mapping.npy').item()
-        # n_cfs = len(cfs_mapping)
         cfs_mapping, n_cfs = create_cfs_mapping()
         logger.info(f'THERE ARE TOTAL {n_cfs} UNIQUE FILTERS')
 

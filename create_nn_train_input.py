@@ -2,11 +2,12 @@ import time
 import pandas as pd
 import numpy as np
 import datetime, os, gc
-from utils import load_data, get_logger, check_dir
+from utils import load_data, get_logger, check_dir, get_data_path
 from clean_session import preprocess_sessions
 
 
 logger = get_logger('create_nn_train__input')
+Filepath = get_data_path()
 
 
 def flogger(df, name):
@@ -30,7 +31,7 @@ def load_train(nrows):
 
 
 def create_cfs_mapping(recompute=False):
-    filepath = './cache'
+    filepath = Filepath.cache_path
     check_dir(filepath)
     filename = os.path.join(filepath, 'filters_mapping.npy')
     if os.path.isfile(filename) and not recompute:
@@ -99,12 +100,13 @@ def compute_session_fts(df):
     return pd.merge(df, session_fts, on='session_id')
 
 
-def save_cache(arr, name, filepath='./cache'):
+def save_cache(arr, name):
+    filepath = Filepath.cache_path
     np.save(os.path.join(filepath, name), arr)
 
 
 def create_train_inputs(nrows=100000, padding=True, recompute=False):
-    filepath = './cache'
+    filepath = Filepath.cache_path
     check_dir(filepath)
     filenames = [os.path.join(filepath, f'{i}.npy') for i in ['train_numerics', 'train_impressions', 'train_prices',
                                                               'train_cfilters', 'train_targets']]

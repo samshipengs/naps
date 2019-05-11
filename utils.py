@@ -5,6 +5,18 @@ import warnings
 import multiprocessing
 import logging
 from datetime import datetime as dt
+from collections import namedtuple
+Point = namedtuple('lol', ['x', 'y'])
+p = Point(11, y=22)     # instantiate with positional or keyword arguments
+
+
+def get_data_path():
+    data_path = './data'
+    cache_path = './cache'
+    model_path = './models'
+    plot_path = './plots'
+    Filepath = namedtuple('filepath', ['data_path', 'cache_path', 'model_path', 'plot_path'])
+    return Filepath(data_path=data_path, cache_path=cache_path, model_path=model_path, plot_path=plot_path)
 
 
 def check_dir(dirs):

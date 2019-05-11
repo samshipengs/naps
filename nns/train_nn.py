@@ -97,7 +97,7 @@ def train(numerics, impressions, prices, cfilters, targets, params, retrain=Fals
             plot_model(model, to_file='./models/model.png')
             # add some callbacks
             callbacks = [ModelCheckpoint(model_filename, save_best_only=True, verbose=1)]
-            log_dir = './logs/{}'.format(dt.now().strftime('%m-%d-%H-%M'))
+            log_dir = f"./logs/{dt.now().strftime('%m-%d-%H-%M')}_padded"
             tb = TensorBoard(log_dir=log_dir, write_graph=True, write_grads=True)
             callbacks.append(tb)
             # simple early stopping
@@ -138,9 +138,9 @@ def train(numerics, impressions, prices, cfilters, targets, params, retrain=Fals
 
 if __name__ == '__main__':
     setup = {'nrows': 5000000,
-             'recompute_train': False,
+             'recompute_train': True,
              'retrain': True,
-             'recompute_test': False}
+             'recompute_test': True}
     params = {'batch_size': 128,
               'n_epochs': 100,
               'model_params': None}

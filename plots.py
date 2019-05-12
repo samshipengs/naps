@@ -10,7 +10,7 @@ Filepath = get_data_path()
 
 def plot_hist(pred_label, true_label, name):
     _ = plt.hist(pred_label, bins=50, label=f'{name}_pred', alpha=0.7)
-    _ = plt.hist(true_label, bins=50, label = f'{name} label', alpha=0.7)
+    _ = plt.hist(true_label, bins=50, label=f'{name} label', alpha=0.7)
     _ = plt.legend()
     plt.savefig(os.path.join(Filepath.plot_path, f'{name}_hist.png'))
     plt.gcf().clear()

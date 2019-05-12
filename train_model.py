@@ -8,7 +8,7 @@ from sklearn.model_selection import StratifiedKFold
 from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
 from keras.utils import plot_model
 from keras.models import load_model
-
+from keras.callbacks import Callback
 from utils import get_logger, get_data_path
 from model import build_model
 from create_model_inputs import create_model_inputs
@@ -21,6 +21,18 @@ TO_DO = ('1) maybe fillna -1 is too overwhelming for last_reference_id_index if 
          '2) session_id size and dwell_time prior last click maybe need normalization in scale or maybe add batchnorm')
 
 logger.info(TO_DO)
+
+
+class LoggingCallback(Callback):
+    """Callback that logs message at end of epoch.
+    """
+    def __init__(self, print_fcn=print):
+        Callback.__init__(self)
+        self.print_fcn = print_fcn
+
+    def on_epoch_end(self, epoch, logs={}):
+        msg = "[Epoch: %i] %s" % (epoch, ", ".join("%s: %f" % (k, v) for k, v in logs.items()))
+        self.print_fcn(msg)
 
 
 def iterate_minibatches(numerics, impressions, prices, cfilters, targets, batch_size, shuffle=True):
@@ -108,6 +120,9 @@ def train(train_inputs, params, retrain=False):
             # rp
             rp = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=params['reduce_on_plateau'], verbose=1)
             callbacks.append(rp)
+            # logging
+            log = LoggingCallback(logger.info)
+            callbacks.append(log)
 
             history = model.fit_generator(train_gen,
                                           steps_per_epoch=len(y_trn) // batch_size,
@@ -138,13 +153,13 @@ def train(train_inputs, params, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 1000000,
-             'recompute_train': True,
+    setup = {'nrows': 5000000,
+             'recompute_train': False,
              'retrain': True,
-             'recompute_test': True}
+             'recompute_test': False}
 
     params = {'batch_size': 256,
-              'n_epochs': 100,
+              'n_epochs': 500,
               'early_stopping': 50,
               'reduce_on_plateau': 30,
               'tcn_params':

@@ -147,6 +147,15 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
 
         logger.info('Only select last click-out from each session')
         df = df.groupby('session_id').last().reset_index()
+        flogger(df, 'df shape after only selecting last click-out row each session')
+
+        # log-transform on session_size feature
+        logger.info('Log-transform on session_size feature')
+        df['session_id_size'] = np.log(df['session_id_size'])
+
+        # log1p-transform on timestamp_dwell_time_prior_clickout but will cliping upper to 1hr
+        logger.info('Also log-transform on timestamp_dwell_time_prior_clickout but will cliping upper to 1hr')
+        df['timestamp_dwell_time_prior_clickout'] = np.log1p(df['timestamp_dwell_time_prior_clickout'].clip(upper=60 ** 2))
 
         if mode == 'test':
             # for testing submission, keep records of the sessions_ids and impressions (still a str)
@@ -165,6 +174,8 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         padding_mask = df['time_steps'] < 25
         df.loc[padding_mask, 'prices'] = df.loc[padding_mask, 'prices'].apply(lambda x: np.pad(x, (0, 25-len(x)),
                                                                                                mode='constant'))
+        logger.info('Log1p-transform prices')
+        df['prices'] = df['prices'].apply(np.log1p)
 
         logger.info('Split impression str to list of impressions')
         df['impressions'] = df['impressions'].str.split('|')
@@ -198,7 +209,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
 
         logger.info('Assign location of previous reference id')
 
-        def assign_last_ref_id(row):
+        def assign_last_ref_id(row, divide=True):
             ref = row['reference_last_reference_id']
             # although reference_id got converted to int, but the reference_last_reference_id was calculated
             # when it was still str value, so here we look up the index in str of impressions
@@ -207,12 +218,15 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
                 return np.nan
             else:
                 if ref in imp:
-                    return imp.index(ref) + 1
-                    # return (imp.index(ref) + 1) / len(imp)
+                    if divide:
+                        return (imp.index(ref) + 1) / len(imp)
+                    else:
+                        return imp.index(ref) + 1
                 else:
                     return np.nan
-
-        df['last_ref_ind'] = df.apply(assign_last_ref_id, axis=1)
+        logger.info('Divide last_ref_id by 25')
+        assign_last_ref_id_func = partial(assign_last_ref_id, divide=True)
+        df['last_ref_ind'] = df.apply(assign_last_ref_id_func, axis=1)
 
         # create meta ohe
         logger.info('Load meta data')

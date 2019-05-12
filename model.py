@@ -1,44 +1,39 @@
 from keras import optimizers
-from keras.layers import concatenate, Dense, Dropout, \
-                         Input, Flatten, Conv1D, BatchNormalization, MaxPooling1D, SpatialDropout1D
+from keras.layers import concatenate, Dense, Dropout, Input, BatchNormalization
 from keras.models import Model
 from keras import backend as K
 from tcn import TCN
 
+from utils import get_logger
 
-def build_model(n_cfs, dense_act='relu'):
+logger = get_logger('model')
+
+
+def build_model(n_cfs, params, dense_act='relu'):
     K.clear_session()
-
+    tcn_params = params['tcn_params']
     # build model =====================================================================================
     # NUMERICS
     numerics_input = Input(shape=(3,), name='numerics_input')
 
     # IMPRESSIONS
     # Receptive field = nb_stacks_of_residuals_blocks * kernel_size * last_dilation.
-    params = {'nb_filters': 32,
-              'kernel_size': 3,
-              'nb_stacks': 2,
-              'padding': 'causal',
-              'dilations': [1, 2, 4],
-              # 'activation': 'norm_relu',
-              'use_skip_connections': True,
-              'dropout_rate': 0.2,
-              'return_sequences': False,
-              'name': 'tcn'}
+    receptive_field = tcn_params['nb_stacks']*tcn_params['kernel_size']*(tcn_params['dilations'][-1])
+    logger.info(f'Receptive field is: {receptive_field}')
 
     impression_input = Input(shape=(None, 157), name='impression_input')
-    params['name'] = 'impression_tcn'
-    impression_tcn = TCN(**params)(impression_input)
+    tcn_params['name'] = 'impression_tcn'
+    impression_tcn = TCN(**tcn_params)(impression_input)
     impression_tcn = BatchNormalization()(impression_tcn)
 
     # PRICES
     price_input = Input(shape=(None, 1), name='price_input')
-    params['name'] = 'price_tcn'
-    price_tcn = TCN(**params)(price_input)
+    tcn_params['name'] = 'price_tcn'
+    price_tcn = TCN(**tcn_params)(price_input)
     price_tcn = BatchNormalization()(price_tcn)
 
     # CURRENT_FILTERS
-    cfilter_input = Input(shape=(n_cfs,), name='cfilter_input')
+    cfilter_input = Input(shape=(n_cfs, ), name='cfilter_input')
     cfilter_h = Dense(units=32, activation=dense_act)(cfilter_input)
     cfilter_h = BatchNormalization()(cfilter_h)
     cfilter_h = Dropout(0.2)(cfilter_h)
@@ -56,9 +51,7 @@ def build_model(n_cfs, dense_act='relu'):
     # [numerics_batch, impressions_batch, prices_batch,  cfilters_batch]
     model = Model(inputs=[numerics_input, impression_input, price_input, cfilter_input],
                   outputs=output_layer)
-    # model = Model(inputs=[numerics_input, cfilter_input],
-    #               outputs=output_layer)
 
-    opt = optimizers.Adam(lr=0.001)
+    opt = optimizers.Adam(lr=params['learning_rate'])
     model.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=['accuracy'])
     return model

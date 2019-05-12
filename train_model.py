@@ -58,7 +58,6 @@ def train(train_inputs, params, retrain=False):
 
     batch_size = params['batch_size']
     n_epochs = params['n_epochs']
-    model_params = params['model_params']
 
     skf = StratifiedKFold(n_splits=6)
     models = []
@@ -84,7 +83,7 @@ def train(train_inputs, params, retrain=False):
             logger.info(f'Loading model from existing {model_filename}')
             model = load_model(model_filename)
         else:
-            model = build_model(n_cfs)
+            model = build_model(n_cfs, params=params)
 
             # print out model info
             nparams = model.count_params()
@@ -94,15 +93,20 @@ def train(train_inputs, params, retrain=False):
             logger.info(f'{model.summary()}')
             plot_model(model, to_file='./models/model.png')
             # add some callbacks
-            callbacks = [ModelCheckpoint(model_filename, save_best_only=True, verbose=1)]
-            log_dir = f"./logs/{dt.now().strftime('%m-%d-%H-%M')}_padded_bs256"
-            tb = TensorBoard(log_dir=log_dir, write_graph=True, write_grads=True)
+            callbacks = [ModelCheckpoint(model_filename, monitor='val_loss', save_best_only=True, verbose=1)]
+            log_dir = Filepath.tf_logss
+            log_filename = ('{0}-batchsize{1}_epochs{2}_tcn_filter{3}_fsize{4}_ns{5}_ldial{6}_nparams_{7}'
+                            .format(dt.now().strftime('%m-%d-%H-%M'), batch_size, n_epochs,
+                                    params['tcn_params']['nb_filters'], params['tcn_params']['kernel_size'],
+                                    params['tcn_params']['nb_stacks'], params['tcn_params']['dilations'][-1],
+                                    nparams))
+            tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True, write_grads=True)
             callbacks.append(tb)
             # simple early stopping
-            es = EarlyStopping(monitor='val_loss', mode='min', patience=50, verbose=1)
+            es = EarlyStopping(monitor='val_loss', mode='min', patience=params['early_stopping'], verbose=1)
             callbacks.append(es)
             # rp
-            rp = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=30, verbose=1)
+            rp = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=params['reduce_on_plateau'], verbose=1)
             callbacks.append(rp)
 
             history = model.fit_generator(train_gen,
@@ -135,13 +139,26 @@ def train(train_inputs, params, retrain=False):
 
 if __name__ == '__main__':
     setup = {'nrows': 1000000,
-             'recompute_train': False,
+             'recompute_train': True,
              'retrain': True,
              'recompute_test': True}
-    
+
     params = {'batch_size': 256,
               'n_epochs': 1,
-              'model_params': None}
+              'early_stopping': 50,
+              'reduce_on_plateau': 30,
+              'tcn_params':
+                  {'nb_filters': 32,
+                   'kernel_size': 3,
+                   'nb_stacks': 2,
+                   'padding': 'causal',
+                   'dilations': [1, 2, 4],
+                   'use_skip_connections': True,
+                   'dropout_rate': 0.2,
+                   'return_sequences': False,
+                   'name': 'tcn'},
+              'learning_rate': 0.001,
+              }
 
     logger.info(f"\nSetup\n{'='*20}\n{setup}\n{'='*20}")
     logger.info(f"\nParams\n{'='*20}\n{params}\n{'='*20}")

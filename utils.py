@@ -6,17 +6,6 @@ import multiprocessing
 import logging
 from datetime import datetime as dt
 from collections import namedtuple
-Point = namedtuple('lol', ['x', 'y'])
-p = Point(11, y=22)     # instantiate with positional or keyword arguments
-
-
-def get_data_path():
-    data_path = './data'
-    cache_path = './cache'
-    model_path = './models'
-    plot_path = './plots'
-    Filepath = namedtuple('filepath', ['data_path', 'cache_path', 'model_path', 'plot_path'])
-    return Filepath(data_path=data_path, cache_path=cache_path, model_path=model_path, plot_path=plot_path)
 
 
 def check_dir(dirs):
@@ -34,8 +23,25 @@ def check_dir(dirs):
             os.makedirs(dirs)
 
 
+def get_data_path():
+    path_dict = {'data_path': './data',
+                 'cache_path': './cache',
+                 'sub_path': './subs',
+                 'model_path': './models',
+                 'plot_path': './plots',
+                 'log_path': './logs',
+                 'tf_logs': './logs/tf_logs'}
+    for _, v in path_dict.items():
+        check_dir(v)
+    FilePath = namedtuple('FilePath', list(path_dict.keys()))
+    return FilePath(**path_dict)
+
+
+Filepath = get_data_path()
+
+
 def get_logger(name):
-    logger_path = './loggers'
+    logger_path = Filepath.log_path
     check_dir(logger_path)
 
     # add logging
@@ -49,9 +55,8 @@ def get_logger(name):
         file_handler = logging.FileHandler(os.path.join(logger_path, f'{current_time}.log'))
         file_handler.setLevel(logging.INFO)
         # create a logging format
-        file_formatter = logging.Formatter(('[%(asctime)s - %(name)s-%(lineno)d - %(funcName)s - %(levelname)s ] '
-                                           '%(message)s'),
-                                           '%m-%d %H:%M:%S')
+        formats = '[%(asctime)s - %(name)s-%(lineno)d - %(funcName)s - %(levelname)s] %(message)s'
+        file_formatter = logging.Formatter(formats, '%m-%d %H:%M:%S')
         file_handler.setFormatter(file_formatter)
         # add the handlers to the logger
         logger.addHandler(file_handler)
@@ -59,8 +64,7 @@ def get_logger(name):
         # console handler
         c_handler = logging.StreamHandler()
         c_handler.setLevel(logging.INFO)
-        c_formatter = logging.Formatter('[%(asctime)s - %(name)s-%(lineno)d - %(funcName)s - %(levelname)s] %(message)s',
-                                        '%m-%d %H:%M:%S')
+        c_formatter = logging.Formatter(formats, '%m-%d %H:%M:%S')
         c_handler.setFormatter(c_formatter)
         logger.addHandler(c_handler)
     return logger
@@ -79,7 +83,7 @@ def ignore_warnings():
     warnings.filterwarnings('ignore', category=UserWarning)
 
 
-def load_data(data_soruce, data_path='../data/', nrows=None, verbose=False, **kwargs):
+def load_data(data_soruce, nrows=None, verbose=False, **kwargs):
     """
     Load csv files as dataframe
     :param data_soruce: str, train or test
@@ -91,14 +95,16 @@ def load_data(data_soruce, data_path='../data/', nrows=None, verbose=False, **kw
     """
     ntrain = 15932993  # '15,932,993'
     ntest = 3782336
-    if nrows is not None:
-        if data_soruce == 'train':
-            load_per = nrows/ntrain
-        else:
-            load_per = nrows/ntest
-        logger.info(f'Loading {data_soruce} using {nrows:,} rows which is {load_per*100:.2f}% out of total train data')
+    data_path = Filepath.data_path
     # read
     df = pd.read_csv(os.path.join(data_path, data_soruce) + '.csv', nrows=nrows, **kwargs)
+    if nrows is not None:
+        total_rows = ntrain if data_soruce == 'train' else ntest
+        # discard the last session as it could possibly be cut off by the nrows selection
+        last_sid = df['session_id'].iloc[-1]
+        df = df[df['session_id'] != last_sid].reset_index(drop=True)
+        logger.info(f'Loading {data_soruce} using {nrows:,} rows ({len(df):,} trimmed) '
+                    f'which is {len(df)/total_rows*100:.2f}% out of total {data_soruce} data')
 
     if verbose:
         if (nrows is None) and (data_soruce in ['train', 'test']):

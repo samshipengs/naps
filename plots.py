@@ -1,15 +1,18 @@
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-from utils import get_logger, check_dir
+from utils import get_data_path
+
+
+Filepath = get_data_path()
 
 
 def plot_hist(pred_label, true_label, name):
     _ = plt.hist(pred_label, bins=50, label=f'{name}_pred', alpha=0.7)
     _ = plt.hist(true_label, bins=50, label = f'{name} label', alpha=0.7)
     _ = plt.legend()
-    check_dir('./plots')
-    plt.savefig(f'./plots/{name}_hist.png')
+    plt.savefig(os.path.join(Filepath.plot_path, f'{name}_hist.png'))
     plt.gcf().clear()
 
 
@@ -43,6 +46,5 @@ def confusion_matrix(y_pred, y_true, name, normalize='row', level=0, log_scale=F
     ax.set_xticklabels(list(mat.columns.astype(str)), rotation=90)
     ax.set_yticks(np.arange(mat.shape[0]))
     _ = ax.set_yticklabels(list(mat.index.astype(str)))
-    check_dir('./plots')
-    plt.savefig(f'./plots/{name}_confusion_matrix.png')
+    plt.savefig(os.path.join(Filepath.plot_path, f'{name}_confusion_matrix.png'))
     plt.gcf().clear()

@@ -4,7 +4,7 @@ import numpy as np
 import datetime, os, gc
 from utils import load_data, get_logger, check_dir, get_data_path
 from clean_session import preprocess_sessions
-from create_nn_train_input import create_cfs_mapping
+from create_model_inputs import create_cfs_mapping
 
 
 logger = get_logger('create_nn_test_input')

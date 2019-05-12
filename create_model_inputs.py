@@ -175,7 +175,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         df.loc[padding_mask, 'prices'] = df.loc[padding_mask, 'prices'].apply(lambda x: np.pad(x, (0, 25-len(x)),
                                                                                                mode='constant'))
         logger.info('Log1p-transform prices')
-        df['prices'] = df['prices'].apply(np.log1p)
+        df['prices'] = df['prices'].apply(lambda p: np.log1p(p))
 
         logger.info('Split impression str to list of impressions')
         df['impressions'] = df['impressions'].str.split('|')

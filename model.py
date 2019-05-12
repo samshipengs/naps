@@ -24,18 +24,18 @@ def build_model(n_cfs, params, dense_act='relu'):
     impression_input = Input(shape=(None, 157), name='impression_input')
     tcn_params['name'] = 'impression_tcn'
     impression_tcn = TCN(**tcn_params)(impression_input)
-    impression_tcn = BatchNormalization()(impression_tcn)
+    # impression_tcn = BatchNormalization()(impression_tcn)
 
     # PRICES
     price_input = Input(shape=(None, 1), name='price_input')
     tcn_params['name'] = 'price_tcn'
     price_tcn = TCN(**tcn_params)(price_input)
-    price_tcn = BatchNormalization()(price_tcn)
+    # price_tcn = BatchNormalization()(price_tcn)
 
     # CURRENT_FILTERS
     cfilter_input = Input(shape=(n_cfs, ), name='cfilter_input')
     cfilter_h = Dense(units=32, activation=dense_act)(cfilter_input)
-    cfilter_h = BatchNormalization()(cfilter_h)
+    # cfilter_h = BatchNormalization()(cfilter_h)
     cfilter_h = Dropout(0.2)(cfilter_h)
 
     # concatenate

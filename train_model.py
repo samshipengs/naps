@@ -94,7 +94,7 @@ def train(train_inputs, params, retrain=False):
             plot_model(model, to_file='./models/model.png')
             # add some callbacks
             callbacks = [ModelCheckpoint(model_filename, monitor='val_loss', save_best_only=True, verbose=1)]
-            log_dir = Filepath.tf_logss
+            log_dir = Filepath.tf_logs
             log_filename = ('{0}-batchsize{1}_epochs{2}_tcn_filter{3}_fsize{4}_ns{5}_ldial{6}_nparams_{7}'
                             .format(dt.now().strftime('%m-%d-%H-%M'), batch_size, n_epochs,
                                     params['tcn_params']['nb_filters'], params['tcn_params']['kernel_size'],
@@ -144,7 +144,7 @@ if __name__ == '__main__':
              'recompute_test': True}
 
     params = {'batch_size': 256,
-              'n_epochs': 1,
+              'n_epochs': 100,
               'early_stopping': 50,
               'reduce_on_plateau': 30,
               'tcn_params':

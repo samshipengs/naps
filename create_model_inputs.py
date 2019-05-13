@@ -19,7 +19,10 @@ def flogger(df, name):
 
 def prepare_data(mode, nrows=None, recompute=True):
     # first load data
-    df = load_data(mode, nrows=nrows)
+    if mode == 'train':
+        df = load_data(mode, nrows=nrows)
+    else:
+        df = load_data(mode)
     flogger(df, f'raw {mode}')
     # preprocess data i.e. dropping duplicates, only take sessions with clicks and clip to last click out
     df = preprocess_sessions(df, mode=mode, drop_duplicates=True, save=True, recompute=recompute)

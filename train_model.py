@@ -76,6 +76,7 @@ def train(train_inputs, params, retrain=False):
     report = {}
     t_init = time.time()
     for fold, (trn_ind, val_ind) in enumerate(skf.split(train_inputs['targets'], train_inputs['targets'])):
+        logger.info(f'Training fold {fold}')
         report_fold = {}
         trn_numerics, val_numerics = train_inputs['numerics'][trn_ind], train_inputs['numerics'][val_ind]
         trn_imp, val_imp = train_inputs['impressions'][trn_ind], train_inputs['impressions'][val_ind]
@@ -147,16 +148,16 @@ def train(train_inputs, params, retrain=False):
         logger.info(f'train mrr: {trn_mrr:.2f} | val mrr: {val_mrr:.2f}')
 
         models.append(model)
-        break
+
     logger.info(f'Total time took: {(time.time()-t_init)/60:.2f} mins')
     return models
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 5000000,
+    setup = {'nrows': 8000000,
              'recompute_train': False,
              'retrain': True,
-             'recompute_test': False}
+             'recompute_test': True}
 
     params = {'batch_size': 256,
               'n_epochs': 500,
@@ -197,30 +198,34 @@ if __name__ == '__main__':
 
     numerics, impressions, prices, cfilters = test_inputs['numerics'], test_inputs['impressions'], \
                                               test_inputs['prices'], test_inputs['cfilters'],
+    test_predictions = []
     for m, model in enumerate(models):
-        test_sub_m = test_sub.copy()
-
-        logger.info(f'Generating submission from model {m}')
+        # test_sub_m = test_sub.copy()
+        logger.info(f'Generating predictions from model {m}')
         test_pred = model.predict(x=[numerics, impressions, prices[:, :, None], cfilters], batch_size=1024)
-        test_pred_label = np.argsort(test_pred)[:, ::-1]
-        np.save(os.path.join(Filepath.sub_path, f'test_pred_label{m}.npy'), test_pred_label)
+        test_predictions.append(test_pred)
 
-        # pad to 25
-        test_sub_m['impressions'] = test_sub_m['impressions'].str.split('|')
-        print(test_sub_m['impressions'].str.len().describe())
-        test_sub_m['impressions'] = test_sub_m['impressions'].apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant'))
-        test_impressions = np.array(list(test_sub_m['impressions'].values))
+    logger.info('Generating submission by averaging cv predictions')
+    test_predictions = np.array(test_predictions).mean(axis=0)
+    test_pred_label = np.argsort(test_predictions)[:, ::-1]
+    np.save(os.path.join(Filepath.sub_path, f'test_pred_label.npy'), test_pred_label)
 
-        test_impressions_pred = test_impressions[np.arange(len(test_impressions))[:, None], test_pred_label]
-        test_sub_m.loc[:, 'recommendations'] = [create_recs(i) for i in test_impressions_pred]
-        del test_sub_m['impressions']
+    # pad to 25
+    test_sub['impressions'] = test_sub['impressions'].str.split('|')
+    print(test_sub['impressions'].str.len().describe())
+    test_sub['impressions'] = test_sub['impressions'].apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant'))
+    test_impressions = np.array(list(test_sub['impressions'].values))
 
-        logger.info(f'Before merging: {test_sub_m.shape}')
-        test_sub_m = pd.merge(test_sub_m, sub_popular, on='session_id')
-        logger.info(f'After merging: {test_sub_m.shape}')
-        del test_sub_m['item_recommendations']
-        test_sub_m.rename(columns={'recommendations': 'item_recommendations'}, inplace=True)
-        test_sub_m = test_sub_m[sub_columns]
-        test_sub_m.to_csv(os.path.join(Filepath.sub_path, f'sub_{m}.csv'), index=False)
+    test_impressions_pred = test_impressions[np.arange(len(test_impressions))[:, None], test_pred_label]
+    test_sub.loc[:, 'recommendations'] = [create_recs(i) for i in test_impressions_pred]
+    del test_sub['impressions']
+
+    logger.info(f'Before merging: {test_sub.shape}')
+    test_sub = pd.merge(test_sub, sub_popular, on='session_id')
+    logger.info(f'After merging: {test_sub.shape}')
+    del test_sub['item_recommendations']
+    test_sub.rename(columns={'recommendations': 'item_recommendations'}, inplace=True)
+    test_sub = test_sub[sub_columns]
+    test_sub.to_csv(os.path.join(Filepath.sub_path, f'sub.csv'), index=False)
     logger.info('Done all')
 

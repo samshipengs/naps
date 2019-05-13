@@ -131,7 +131,8 @@ def save_cache(arr, name):
 
 
 def create_model_inputs(mode, nrows=100000, recompute=False):
-    logger.info(f"\n{'='*10} Creating {mode.upper()} model inputs with {nrows:,} rows and recompute={recompute} {'='*10}")
+    nrows_ = nrows if nrows is not None else 15932993
+    logger.info(f"\n{'='*10} Creating {mode.upper()} model inputs with {nrows_:,} rows and recompute={recompute} {'='*10}")
     filepath = Filepath.cache_path
     filenames = ['numerics', 'impressions', 'prices', 'cfilters']
     if mode == 'train':

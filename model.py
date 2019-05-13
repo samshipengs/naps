@@ -105,10 +105,10 @@ def build_model(n_cfs, params, dense_act='relu'):
     concat1 = Dropout(0.2)(concat1)
 
     concat2 = concatenate([numerics, concat1])
-    concat2 = Dense(units=64, activation=dense_act)(concat2)
+    concat2 = Dense(units=128, activation=dense_act)(concat2)
     concat2 = Dropout(0.2)(concat2)
 
-    h = Dense(units=32, activation=dense_act)(concat2)
+    h = Dense(units=64, activation=dense_act)(concat2)
 
     output_layer = Dense(25, activation='softmax')(h)
 

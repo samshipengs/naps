@@ -131,25 +131,8 @@ def last_filters(cf):
         return cf[mask].iloc[-1]
 
 
-# def last_reference_id(rids, mode):
-#     mask = rids.notna()
-#     if mode == 'train':
-#         n = 1
-#         last_ref_loc = -2
-#     elif mode == 'test':
-#         n = 0
-#         last_ref_loc = -1
-#     else:
-#         raise ValueError(f'Invalid mode: {mode}')
-#     if mask.sum() <= n:
-#         return np.nan
-#     else:
-#         # the second last reference id i.e. the one before click out
-#         return rids[mask].iloc[last_ref_loc]
-
-
-def last_reference_id(grp, mode):
-    mask = grp['reference_id'].notna()
+def last_reference_id(rids, mode):
+    mask = rids.notna()
     if mode == 'train':
         n = 1
         last_ref_loc = -2
@@ -161,18 +144,35 @@ def last_reference_id(grp, mode):
     if mask.sum() <= n:
         return np.nan
     else:
-        # # the second last reference id i.e. the one before click out
-        # return rids[mask].iloc[last_ref_loc]
-        # the second last reference id i.e. the one before click out and the associated action_type
-        return grp[mask]['action_type'].iloc[last_ref_loc], grp[mask]['reference_id'].iloc[last_ref_loc]
+        # the second last reference id i.e. the one before click out
+        return rids[mask].iloc[last_ref_loc]
+
+
+# def last_reference_id(grp, mode):
+#     mask = grp['reference_id'].notna()
+#     if mode == 'train':
+#         n = 1
+#         last_ref_loc = -2
+#     elif mode == 'test':
+#         n = 0
+#         last_ref_loc = -1
+#     else:
+#         raise ValueError(f'Invalid mode: {mode}')
+#     if mask.sum() <= n:
+#         return np.nan
+#     else:
+#         # # the second last reference id i.e. the one before click out
+#         # return rids[mask].iloc[last_ref_loc]
+#         # the second last reference id i.e. the one before click out and the associated action_type
+#         return grp[mask]['action_type'].iloc[last_ref_loc], grp[mask]['reference_id'].iloc[last_ref_loc]
 
 
 def compute_session_fts(df, mode):
     last_rid = partial(last_reference_id, mode=mode)
     aggs = {'timestamp': [session_duration, dwell_time_prior_clickout],
             'current_filters': [last_filters],
-            'session_id': 'size'}#,
-            # 'reference': [last_rid]}
+            'session_id': 'size',
+            'reference': [last_rid]}
     session_grp = df.groupby('session_id')
     session_fts = session_grp.agg(aggs)
     session_fts.columns = ['_'.join(col).strip() for col in session_fts.columns.values]
@@ -189,7 +189,7 @@ def save_cache(arr, name):
     np.save(os.path.join(filepath, name), arr)
 
 
-def create_model_inputs(mode, nrows=100000, recompute=False):
+def create_model_inputs(mode, nrows=100000, inspection=False, recompute=False):
     nrows_ = nrows if nrows is not None else 15932993
     logger.info(f"\n{'='*10} Creating {mode.upper()} model inputs with {nrows_:,} rows and recompute={recompute} {'='*10}")
     filepath = Filepath.cache_path
@@ -204,7 +204,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
     else:
         logger.info(f'Prepare {mode} data')
         t_init = time.time()
-        df = prepare_data(mode, nrows=nrows, recompute=True)
+        df = prepare_data(mode, convert_action_type=False, nrows=nrows, recompute=True)
         logger.info('Compute session features')
         df = compute_session_fts(df, mode)
 
@@ -291,7 +291,8 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         logger.info('Divide last_ref_id by 25')
         assign_last_ref_id_func = partial(assign_last_ref_id, divide=True)
         df['last_ref_ind'] = df.apply(assign_last_ref_id_func, axis=1)
-
+        if inspection:
+            return df
         # create meta ohe
         logger.info('Load meta data')
         meta_df = load_data('item_metadata')

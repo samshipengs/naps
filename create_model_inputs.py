@@ -17,7 +17,39 @@ def flogger(df, name):
     logger.info(f'{name} shape: ({df.shape[0]:,}, {df.shape[1]})')
 
 
-def prepare_data(mode, nrows=None, recompute=True):
+def create_action_type_mapping(recompute=False):
+    filepath = Filepath.cache_path
+    filename = os.path.join(filepath, 'action_types_mapping.npy')
+
+    if os.path.isfile(filename) and not recompute:
+        logger.info(f'Load action_types mapping from existing: {filename}')
+        action_type2natural = np.load(filename).item()
+        n_unique_actions = len(action_type2natural)
+    else:
+        # train = load_data('train', nrows=None, usecols=['action_type'])
+        # test = load_data('test', nrows=None, usecols=['action_type'])
+        # train = train[train['action_type'].notna()]
+        # test = test[test['action_type'].notna()]
+        # df = pd.concat([train, test], axis=0, ignore_index=True)
+        # del train, test
+        # gc.collect()
+        # actions = df['action_type'].unique()
+        # del df
+        # gc.collect()
+
+        # hardcode
+        actions = ['search for poi', 'interaction item image', 'clickout item',
+                     'interaction item info', 'interaction item deals',
+                     'search for destination', 'filter selection',
+                     'interaction item rating', 'search for item',
+                     'change of sort order']
+        action_type2natural = {v: k for k, v in enumerate(actions)}
+        n_unique_actions = len(actions)
+        np.save(filename, action_type2natural)
+    return action_type2natural, n_unique_actions
+
+
+def prepare_data(mode, convert_action_type=True, nrows=None, recompute=True):
     # first load data
     if mode == 'train':
         df = load_data(mode, nrows=nrows)
@@ -38,6 +70,12 @@ def prepare_data(mode, nrows=None, recompute=True):
     usecols = ['user_id', 'session_id', 'timestamp', 'step', 'action_type', 'current_filters',
                'reference', 'impressions', 'prices']
     df = df[usecols]
+    if convert_action_type:
+        logger.info('Converting action_types to int (natural number)')
+        action_type2natural, _ = create_action_type_mapping(recompute=False)
+        df['action_type'] = df['action_type'].map(action_type2natural)
+    logger.info('Sort df by user_id, session_id, timestamp, step')
+    df = df.sort_values(by=['user_id', 'session_id', 'timestamp', 'step']).reset_index(drop=True)
     flogger(df, f'Prepared {mode} data')
     return df
 
@@ -93,8 +131,25 @@ def last_filters(cf):
         return cf[mask].iloc[-1]
 
 
-def last_reference_id(rids, mode):
-    mask = rids.notna()
+# def last_reference_id(rids, mode):
+#     mask = rids.notna()
+#     if mode == 'train':
+#         n = 1
+#         last_ref_loc = -2
+#     elif mode == 'test':
+#         n = 0
+#         last_ref_loc = -1
+#     else:
+#         raise ValueError(f'Invalid mode: {mode}')
+#     if mask.sum() <= n:
+#         return np.nan
+#     else:
+#         # the second last reference id i.e. the one before click out
+#         return rids[mask].iloc[last_ref_loc]
+
+
+def last_reference_id(grp, mode):
+    mask = grp['reference_id'].notna()
     if mode == 'train':
         n = 1
         last_ref_loc = -2
@@ -106,21 +161,25 @@ def last_reference_id(rids, mode):
     if mask.sum() <= n:
         return np.nan
     else:
-        # the second last reference id i.e. the one before click out
-        return rids[mask].iloc[last_ref_loc]
+        # # the second last reference id i.e. the one before click out
+        # return rids[mask].iloc[last_ref_loc]
+        # the second last reference id i.e. the one before click out and the associated action_type
+        return grp[mask]['action_type'].iloc[last_ref_loc], grp[mask]['reference_id'].iloc[last_ref_loc]
 
 
 def compute_session_fts(df, mode):
     last_rid = partial(last_reference_id, mode=mode)
     aggs = {'timestamp': [session_duration, dwell_time_prior_clickout],
             'current_filters': [last_filters],
-            'session_id': 'size',
-            'reference': [last_rid]}
+            'session_id': 'size'}#,
+            # 'reference': [last_rid]}
     session_grp = df.groupby('session_id')
     session_fts = session_grp.agg(aggs)
     session_fts.columns = ['_'.join(col).strip() for col in session_fts.columns.values]
     logger.info(f'Session features generated: {list(session_fts.columns)}')
     session_fts.reset_index(inplace=True)
+
+    # add last_reference_id and its action_type
 
     return pd.merge(df, session_fts, on='session_id')
 
@@ -218,6 +277,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
             # although reference_id got converted to int, but the reference_last_reference_id was calculated
             # when it was still str value, so here we look up the index in str of impressions
             imp = [str(i) for i in row['impressions']]
+
             if pd.isna(ref):
                 return np.nan
             else:

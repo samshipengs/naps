@@ -155,7 +155,7 @@ def train(train_inputs, params, retrain=False):
 
 if __name__ == '__main__':
     setup = {'nrows': 8000000,
-             'recompute_train': False,
+             'recompute_train': True,
              'retrain': True,
              'recompute_test': True}
 

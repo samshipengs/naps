@@ -55,7 +55,7 @@ def iterate_minibatches(numerics, impressions, prices, cfilters, targets, batch_
             cfilters_batch = cfilters[excerpt]
             targets_batch = targets[excerpt]
 
-            prices_batch = np.array([i.reshape(-1, 1) for i in prices_batch])
+            # prices_batch = np.array([i.reshape(-1, 1) for i in prices_batch])
             yield ([numerics_batch, impressions_batch, prices_batch,
                     cfilters_batch], targets_batch)
 
@@ -154,7 +154,7 @@ def train(train_inputs, params, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 8000000,
+    setup = {'nrows': 1000000,
              'recompute_train': True,
              'retrain': True,
              'recompute_test': True}

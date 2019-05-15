@@ -1,14 +1,14 @@
-# from keras import optimizers
-# from keras.layers import concatenate, Dense, Dropout, Input, BatchNormalization
-# from keras.models import Model
-# from keras import backend as K
-# from tcn import TCN
-#
-# from utils import get_logger
-#
-# logger = get_logger('model')
-#
-#
+from keras import optimizers
+from keras.layers import concatenate, Dense, Dropout, Input, BatchNormalization
+from keras.models import Model
+from keras import backend as K
+from tcn import TCN
+
+from utils import get_logger
+
+logger = get_logger('model')
+
+
 # def build_model(n_cfs, params, dense_act='relu'):
 #     K.clear_session()
 #     tcn_params = params['tcn_params']
@@ -57,23 +57,12 @@
 #     return model
 
 
-from keras import optimizers
-from keras.layers import concatenate, Dense, Dropout, Input, BatchNormalization
-from keras.models import Model
-from keras import backend as K
-from tcn import TCN
-
-from utils import get_logger
-
-logger = get_logger('model')
-
-
 def build_model(n_cfs, params, dense_act='relu'):
     K.clear_session()
     tcn_params = params['tcn_params']
     # build model =====================================================================================
     # NUMERICS
-    numerics_input = Input(shape=(3,), name='numerics_input')
+    numerics_input = Input(shape=(4,), name='numerics_input')
     numerics = Dense(16, activation=dense_act)(numerics_input)
 
     # IMPRESSIONS

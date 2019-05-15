@@ -131,25 +131,8 @@ def last_filters(cf):
         return cf[mask].iloc[-1]
 
 
-def last_reference_id(rids, mode):
-    mask = rids.notna()
-    if mode == 'train':
-        n = 1
-        last_ref_loc = -2
-    elif mode == 'test':
-        n = 0
-        last_ref_loc = -1
-    else:
-        raise ValueError(f'Invalid mode: {mode}')
-    if mask.sum() <= n:
-        return np.nan
-    else:
-        # the second last reference id i.e. the one before click out
-        return rids[mask].iloc[last_ref_loc]
-
-
-# def last_reference_id(grp, mode):
-#     mask = grp['reference_id'].notna()
+# def last_reference_id(rids, mode):
+#     mask = rids.notna()
 #     if mode == 'train':
 #         n = 1
 #         last_ref_loc = -2
@@ -161,26 +144,62 @@ def last_reference_id(rids, mode):
 #     if mask.sum() <= n:
 #         return np.nan
 #     else:
-#         # # the second last reference id i.e. the one before click out
-#         # return rids[mask].iloc[last_ref_loc]
-#         # the second last reference id i.e. the one before click out and the associated action_type
-#         return grp[mask]['action_type'].iloc[last_ref_loc], grp[mask]['reference_id'].iloc[last_ref_loc]
+#         # the second last reference id i.e. the one before click out
+#         return rids[mask].iloc[last_ref_loc]
+
+
+def last_reference_id(grp, mode):
+    mask = grp['reference'].notna()
+    if mode == 'train':
+        n = 1
+        last_ref_loc = -2
+    elif mode == 'test':
+        n = 0
+        last_ref_loc = -1
+    else:
+        raise ValueError(f'Invalid mode: {mode}')
+    if mask.sum() <= n:
+        return np.nan
+    else:
+        # the second last reference id i.e. the one before click out and the associated action_type
+        return grp[mask]['action_type'].iloc[last_ref_loc], grp[mask]['reference'].iloc[last_ref_loc]
+
+
+# def compute_session_fts(df, mode):
+#     last_rid = partial(last_reference_id, mode=mode)
+#     aggs = {'timestamp': [session_duration, dwell_time_prior_clickout],
+#             'current_filters': [last_filters],
+#             'session_id': 'size',
+#             'reference': [last_rid]}
+#     session_grp = df.groupby('session_id')
+#     session_fts = session_grp.agg(aggs)
+#     session_fts.columns = ['_'.join(col).strip() for col in session_fts.columns.values]
+#     logger.info(f'Session features generated: {list(session_fts.columns)}')
+#     session_fts.reset_index(inplace=True)
+#
+#     # add last_reference_id and its action_type
+#
+#     return pd.merge(df, session_fts, on='session_id')
 
 
 def compute_session_fts(df, mode):
-    last_rid = partial(last_reference_id, mode=mode)
+    # last_rid = partial(last_reference_id, mode=mode)
     aggs = {'timestamp': [session_duration, dwell_time_prior_clickout],
             'current_filters': [last_filters],
-            'session_id': 'size',
-            'reference': [last_rid]}
-    session_grp = df.groupby('session_id')
+            'session_id': 'size'}
+
+    session_grp = df[['session_id', 'timestamp', 'current_filters']].groupby('session_id')
     session_fts = session_grp.agg(aggs)
     session_fts.columns = ['_'.join(col).strip() for col in session_fts.columns.values]
     logger.info(f'Session features generated: {list(session_fts.columns)}')
     session_fts.reset_index(inplace=True)
 
     # add last_reference_id and its action_type
+    last_rid = partial(last_reference_id, mode=mode)
+    session_grp = df[['session_id', 'action_type', 'reference']].groupby('session_id')
+    action_id_pair = session_grp.apply(last_rid).reset_index(name='action_id_pair')
 
+    df = pd.merge(df, action_id_pair, on='session_id', how='left')
     return pd.merge(df, session_fts, on='session_id')
 
 
@@ -189,7 +208,7 @@ def save_cache(arr, name):
     np.save(os.path.join(filepath, name), arr)
 
 
-def create_model_inputs(mode, nrows=100000, inspection=False, recompute=False):
+def create_model_inputs(mode, nrows=100000, recompute=False):
     nrows_ = nrows if nrows is not None else 15932993
     logger.info(f"\n{'='*10} Creating {mode.upper()} model inputs with {nrows_:,} rows and recompute={recompute} {'='*10}")
     filepath = Filepath.cache_path
@@ -204,7 +223,7 @@ def create_model_inputs(mode, nrows=100000, inspection=False, recompute=False):
     else:
         logger.info(f'Prepare {mode} data')
         t_init = time.time()
-        df = prepare_data(mode, convert_action_type=False, nrows=nrows, recompute=True)
+        df = prepare_data(mode, convert_action_type=True, nrows=nrows, recompute=True)
         logger.info('Compute session features')
         df = compute_session_fts(df, mode)
 
@@ -237,8 +256,16 @@ def create_model_inputs(mode, nrows=100000, inspection=False, recompute=False):
         padding_mask = df['time_steps'] < 25
         df.loc[padding_mask, 'prices'] = df.loc[padding_mask, 'prices'].apply(lambda x: np.pad(x, (0, 25-len(x)),
                                                                                                mode='constant'))
-        logger.info('Log1p-transform prices')
-        df['prices'] = df['prices'].apply(lambda p: np.log1p(p))
+        # logger.info('Log1p-transform prices')
+        # df['prices'] = df['prices'].apply(lambda p: np.log1p(p))
+        logger.info('Normalizing price')
+
+        # maybe normalize to percentage within each records, check does each item_id have the same price
+        # over all records
+        def normalize(ps):
+            p_arr = np.array(ps)
+            return p_arr / (p_arr.max())
+        df['prices'] = df['prices'].apply(normalize)
 
         logger.info('Split impression str to list of impressions')
         df['impressions'] = df['impressions'].str.split('|')
@@ -246,7 +273,7 @@ def create_model_inputs(mode, nrows=100000, inspection=False, recompute=False):
         df['impressions'] = df['impressions'].apply(lambda x: [int(i) for i in x])
         logger.info('Pad 0s for impressions length shorter than 25')
         df.loc[padding_mask, 'impressions'] = (df.loc[padding_mask, 'impressions']
-                                                 .apply(lambda x: np.pad(x, (0, 25-len(x)),mode='constant')))
+                                                 .apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant')))
 
         if mode == 'train':
             logger.info('Assign target')
@@ -272,27 +299,51 @@ def create_model_inputs(mode, nrows=100000, inspection=False, recompute=False):
 
         logger.info('Assign location of previous reference id')
 
+        # def assign_last_ref_id(row, divide=True):
+        #     ref = row['reference_last_reference_id']
+        #     # although reference_id got converted to int, but the reference_last_reference_id was calculated
+        #     # when it was still str value, so here we look up the index in str of impressions
+        #     imp = [str(i) for i in row['impressions']]
+        #
+        #     if pd.isna(ref):
+        #         return np.nan
+        #     else:
+        #         if ref in imp:
+        #             if divide:
+        #                 return (imp.index(ref) + 1) / len(imp)
+        #             else:
+        #                 return imp.index(ref) + 1
+        #         else:
+        #             return np.nan
+        
+        #_, n_unique_actions = create_action_type_mapping()
+
         def assign_last_ref_id(row, divide=True):
-            ref = row['reference_last_reference_id']
+            action_id_pair = row['action_id_pair']
+            if pd.isna(action_id_pair):
+                return np.zeros(2, dtype=int)
+            # ref = row['reference_last_reference_id']
             # although reference_id got converted to int, but the reference_last_reference_id was calculated
             # when it was still str value, so here we look up the index in str of impressions
-            imp = [str(i) for i in row['impressions']]
-
-            if pd.isna(ref):
-                return np.nan
             else:
+                imp = [str(i) for i in row['impressions']]
+                action_type, ref = action_id_pair
                 if ref in imp:
                     if divide:
-                        return (imp.index(ref) + 1) / len(imp)
+                        pos = (imp.index(ref) + 1) / len(imp)
                     else:
-                        return imp.index(ref) + 1
+                        pos = imp.index(ref) + 1
+                    if action_type == 2:
+                        return [pos, 1]
+                    else:
+                        return [pos, 0]
                 else:
-                    return np.nan
+                    return np.zeros(2, dtype=int)
+
         logger.info('Divide last_ref_id by 25')
         assign_last_ref_id_func = partial(assign_last_ref_id, divide=True)
         df['last_ref_ind'] = df.apply(assign_last_ref_id_func, axis=1)
-        if inspection:
-            return df
+        
         # create meta ohe
         logger.info('Load meta data')
         meta_df = load_data('item_metadata')
@@ -338,15 +389,7 @@ def create_model_inputs(mode, nrows=100000, inspection=False, recompute=False):
                                      if type(cfs) == list else np.zeros(n_cfs, dtype=int)))
 
         logger.info('Grabbing list of inputs')
-        logger.info('Normalizing price')
 
-        # maybe normalize to percentage within each records, check does each item_id have the same price
-        # over all records
-        def normalize(ps):
-            p_arr = np.array(ps)
-            return p_arr / (p_arr.max())
-
-        df['prices'] = df['prices'].apply(normalize)
         # PRICES
         prices = np.array(list(df['prices'].values))
         df.drop('prices', axis=1, inplace=True)
@@ -366,11 +409,11 @@ def create_model_inputs(mode, nrows=100000, inspection=False, recompute=False):
 
         logger.info('Getting numerics')
         # numerics
-        num_cols = ['session_id_size', 'timestamp_dwell_time_prior_clickout', 'last_ref_ind']
+        num_cols = ['session_id_size', 'timestamp_dwell_time_prior_clickout']
         logger.info('Filling nans with value=-1')
         for c in num_cols:
             df[c] = df[c].fillna(-1)
-        numerics = df[num_cols].values
+        numerics = np.concatenate((df[num_cols].values, np.array(list(df['last_ref_ind'].values))), axis=1)
         df.drop(num_cols, axis=1, inplace=True)
         save_cache(numerics, f'{mode}_numerics.npy')
 

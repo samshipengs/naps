@@ -154,10 +154,10 @@ def train(train_inputs, params, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 8000000,
-             'recompute_train': True,
+    setup = {'nrows': 5000000,
+             'recompute_train': False,
              'retrain': True,
-             'recompute_test': True}
+             'recompute_test': False}
 
     params = {'batch_size': 256,
               'n_epochs': 500,

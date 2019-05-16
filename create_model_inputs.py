@@ -80,31 +80,31 @@ def prepare_data(mode, convert_action_type=True, nrows=None, recompute=True):
     return df
 
 
-def create_cfs_mapping(recompute=False):
-    filepath = Filepath.cache_path
-    filename = os.path.join(filepath, 'filters_mapping.npy')
-
-    if os.path.isfile(filename) and not recompute:
-        logger.info(f'Load cfs mapping from existing: {filename}')
-        cfs2natural = np.load(filename).item()
-        n_unique_filters = len(cfs2natural)
-    else:
-        train = load_data('train', nrows=None, usecols=['current_filters'])
-        test = load_data('test', nrows=None, usecols=['current_filters'])
-        train = train[train['current_filters'].notna()]
-        test = test[test['current_filters'].notna()]
-        df = pd.concat([train, test], axis=0, ignore_index=True)
-        del train, test
-        gc.collect()
-
-        df['current_filters'] = df['current_filters'].str.lower().str.split('|')
-        # get unique cfs
-        unique_cfs = list(set(np.concatenate(df['current_filters'].values)))
-        cfs2natural = {v: k for k, v in enumerate(unique_cfs)}
-        logger.info('Saving filter mappings')
-        np.save(filename, cfs2natural)
-        n_unique_filters = len(unique_cfs)
-    return cfs2natural, n_unique_filters
+# def create_cfs_mapping(recompute=False):
+#     filepath = Filepath.cache_path
+#     filename = os.path.join(filepath, 'filters_mapping.npy')
+#
+#     if os.path.isfile(filename) and not recompute:
+#         logger.info(f'Load cfs mapping from existing: {filename}')
+#         cfs2natural = np.load(filename).item()
+#         n_unique_filters = len(cfs2natural)
+#     else:
+#         train = load_data('train', nrows=None, usecols=['current_filters'])
+#         test = load_data('test', nrows=None, usecols=['current_filters'])
+#         train = train[train['current_filters'].notna()]
+#         test = test[test['current_filters'].notna()]
+#         df = pd.concat([train, test], axis=0, ignore_index=True)
+#         del train, test
+#         gc.collect()
+#
+#         df['current_filters'] = df['current_filters'].str.lower().str.split('|')
+#         # get unique cfs
+#         unique_cfs = list(set(np.concatenate(df['current_filters'].values)))
+#         cfs2natural = {v: k for k, v in enumerate(unique_cfs)}
+#         logger.info('Saving filter mappings')
+#         np.save(filename, cfs2natural)
+#         n_unique_filters = len(unique_cfs)
+#     return cfs2natural, n_unique_filters
 
 
 # create some session features
@@ -123,12 +123,12 @@ def dwell_time_prior_clickout(ts):
         return (ts_sorted.iloc[-1] - ts_sorted.iloc[-2]).total_seconds()
 
 
-def last_filters(cf):
-    mask = cf.notna()
-    if mask.sum() == 0:
-        return np.nan
-    else:
-        return cf[mask].iloc[-1]
+# def last_filters(cf):
+#     mask = cf.notna()
+#     if mask.sum() == 0:
+#         return np.nan
+#     else:
+#         return cf[mask].iloc[-1]
 
 
 # def last_reference_id(rids, mode):
@@ -185,7 +185,7 @@ def last_reference_id(grp, mode):
 def compute_session_fts(df, mode):
     # last_rid = partial(last_reference_id, mode=mode)
     aggs = {'timestamp': [session_duration, dwell_time_prior_clickout],
-            'current_filters': [last_filters],
+            # 'current_filters': [last_filters],
             'session_id': 'size'}
 
     session_grp = df[['session_id', 'timestamp', 'current_filters']].groupby('session_id')
@@ -201,6 +201,54 @@ def compute_session_fts(df, mode):
 
     df = pd.merge(df, action_id_pair, on='session_id', how='left')
     return pd.merge(df, session_fts, on='session_id')
+
+
+def click_view_encoding(m=5, nrows=None, recompute=False):
+    """
+    encode click and view
+    :param m: smoothing factor
+    :param nrows: load numebr of rows data
+    :param recompute:
+    :return:
+    """
+    filepath = Filepath.cache_path
+    filename = os.path.join(filepath, 'clickview_encodings.csv')
+    if os.path.isfile(filename) and not recompute:
+        logger.info(f'Load from existing file: {filename}')
+        encoding = pd.read_csv(filename)
+    else:
+        # only load reference and action_type
+        ref_imp = load_data('train', nrows=nrows, usecols=['action_type', 'reference', 'impressions'])
+        ref_imp = ref_imp.loc[ref_imp.action_type == 'clickout item'].reset_index(drop=True)
+        ref_imp.drop('action_type', axis=1, inplace=True)
+        ref_imp = ref_imp[~ref_imp.reference.str.contains('[a-zA-Z]')].reset_index(drop=True)
+
+        # create list of impressions
+        ref_imp['impressions'] = ref_imp['impressions'].str.split('|')
+        # remove the clicked id from impressions
+        ref_imp['impressions'] = ref_imp.apply(lambda row: list(set(row.impressions) - set([row.reference])), axis=1)
+
+        # create 0 for impressions (viewed) and 1 for clicked
+        imps = ref_imp.impressions.values
+        imps = [j for i in imps for j in i]
+        click_imp = pd.concat([pd.Series([0] * len(imps), index=imps),
+                               pd.Series([1] * len(ref_imp), index=ref_imp.reference.values)])
+        click_imp.index.name = 'item_id'
+        click_imp = pd.DataFrame(click_imp, columns=['clicked']).reset_index()
+
+        # smoothed encoding
+        mu = click_imp['clicked'].mean()
+        agg = click_imp.groupby('item_id')['clicked'].agg(['count', 'mean'])
+        count = agg['count']
+        mus = agg['mean']
+        smoothed = (count * mus + m * mu) / (count + m)
+        # click_imp['clicked'] = click_imp['item_id'].map(smoothed)
+        encoding = smoothed.reset_index(name='clicked')
+        encoding['item_id'] = encoding['item_id'].astype(int)
+
+        # save
+        encoding.to_csv(filename, index=False)
+    return encoding
 
 
 def save_cache(arr, name):
@@ -245,8 +293,9 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
             test_sub.to_csv(os.path.join(Filepath.sub_path, 'test_sub.csv'), index=False)
             del test_sub
 
-        logger.info('Lower case current filters and split to list')
-        df['cfs'] = df['current_filters_last_filters'].str.lower().str.split('|')
+        # logger.info('Lower case current filters and split to list')
+        # df['cfs'] = df['current_filters_last_filters'].str.lower().str.split('|')
+        df['nf'] = df['current_filters_last_filters'].str.split('|').str.len()
 
         logger.info('Split prices str to list and convert to int')
         df['prices'] = df['prices'].str.split('|')
@@ -265,7 +314,11 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         def normalize(ps):
             p_arr = np.array(ps)
             return p_arr / (p_arr.max())
-        df['prices'] = df['prices'].apply(normalize)
+        df['prices_percentage'] = df['prices'].apply(normalize)
+        # add percetange of log
+
+
+
 
         logger.info('Split impression str to list of impressions')
         df['impressions'] = df['impressions'].str.split('|')

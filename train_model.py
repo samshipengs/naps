@@ -20,6 +20,7 @@ def cv_encode(df, mapping):
     for c in imp_cols:
         df[c] = df[c].map(mapping)
 
+
 def train(train_inputs, params, add_cv_encoding=False, retrain=False):
     cache_path = Filepath.cache_path
     model_path = Filepath.model_path

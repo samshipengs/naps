@@ -187,11 +187,11 @@ def click_view_encoding(sids, fold, m=5, nrows=None, recompute=False):
         encoding['item_id'] = encoding['item_id'].astype(int)
 
         # return just the dict for mapping
-        cv_encoding = dict(cv_encoding[['item_id', 'clicked']].values)
+        cv_encoding = dict(encoding[['item_id', 'clicked']].values)
 
         # save
         encoding.to_csv(filename, index=False)
-    return encoding
+    return cv_encoding
 
 
 def save_cache(arr, name):

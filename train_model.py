@@ -86,7 +86,7 @@ if __name__ == '__main__':
     params = {'loss_function': 'MultiClass',
               'custom_metric': ['MultiClass', 'Accuracy'],
               'eval_metric': 'MultiClass',
-              'iterations': 1000,
+              'iterations': 3000,
               'learning_rate': 0.02,
               'depth': 8,
               'task_type': device}

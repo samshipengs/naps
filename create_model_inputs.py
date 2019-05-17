@@ -149,10 +149,12 @@ def click_view_encoding(sids, fold, m=5, nrows=None, recompute=False):
         encoding = pd.read_csv(filename)
         cv_encoding = dict(encoding[['item_id', 'clicked']].values)
     else:
+        logger.info('Calculating the click/view ratio encodings for each item_id')
         # only load reference and action_type
         ref_imp = load_data('train', nrows=nrows, usecols=['session_id', 'action_type', 'reference', 'impressions'])
-        # only select the data whose session_ids are given in sids
-        ref_imp = ref_imp[ref_imp['session_id'].isin(sids)].reset_index(drop=True)
+        if sids is not None:
+            # only select the data whose session_ids are given in sids
+            ref_imp = ref_imp[ref_imp['session_id'].isin(sids)].reset_index(drop=True)
         ref_imp.drop('session_id', axis=1, inplace=True)
         # only get the row that is click-out action
         ref_imp = ref_imp.loc[ref_imp.action_type == 'clickout item'].reset_index(drop=True)

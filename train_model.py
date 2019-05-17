@@ -78,6 +78,7 @@ def train(train_inputs, params, retrain=False):
 
 if __name__ == '__main__':
     setup = {'nrows': None,
+             'add_cv_encoding': False,
              'recompute_train': True,
              'retrain': True,
              'recompute_test': True}
@@ -95,11 +96,13 @@ if __name__ == '__main__':
     logger.info(f"\nParams\n{'='*20}\n{params}\n{'='*20}")
 
     # first create training inputs
-    train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], recompute=setup['recompute_train'])
+    train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], add_cv_encoding=setup['add_cv_encoding'],
+                                       recompute=setup['recompute_train'])
     # train the model
     models = train(train_inputs, params=params, retrain=setup['retrain'])
     # get the test inputs
-    test_inputs = create_model_inputs(mode='test', nrows=setup['nrows'], recompute=setup['recompute_test'])
+    test_inputs = create_model_inputs(mode='test', nrows=setup['nrows'], add_cv_encoding=setup['add_cv_encoding'],
+                                      recompute=setup['recompute_test'])
     # make predictions on test
     logger.info('Load test sub csv')
     test_sub = pd.read_csv(os.path.join(Filepath.sub_path, 'test_sub.csv'))

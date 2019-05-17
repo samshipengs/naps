@@ -260,10 +260,11 @@ def save_cache(arr, name):
     np.save(os.path.join(filepath, name), arr)
 
 
-def create_model_inputs(mode, nrows=100000, recompute=False):
+def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=False):
     nrows_ = nrows if nrows is not None else 15932993
     logger.info(f"\n{'='*10} Creating {mode.upper()} model inputs with {nrows_:,} rows and recompute={recompute} {'='*10}")
-    filename = os.path.join(Filepath.cache_path, f'{mode}_inputs.snappy')
+    cv = 'cv_encoded' if add_cv_encoding else 'no_cv_encoding'
+    filename = os.path.join(Filepath.cache_path, f'{mode}_inputs_{cv}.snappy')
 
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load from existing {filename}')
@@ -327,13 +328,15 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         logger.info('Pad 0s for impressions length shorter than 25')
         df.loc[padding_mask, 'impressions'] = (df.loc[padding_mask, 'impressions']
                                                  .apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant')))
-        logger.info('Add click-view/impression encodings')
-        cv_encoding = click_view_encoding(m=5, nrows=None, recompute=False)
-        cv_encoding = dict(cv_encoding[['item_id', 'clicked']].values)
-        imp_cols = [f'imp_{i}' for i in range(25)]
-        df[imp_cols] = pd.DataFrame(df['impressions'].values.tolist(), index=df.index)
-        for c in imp_cols:
-            df[c] = df[c].map(cv_encoding)
+
+        if add_cv_encoding:
+            logger.info('Add click-view/impression encodings')
+            cv_encoding = click_view_encoding(m=5, nrows=None, recompute=False)
+            cv_encoding = dict(cv_encoding[['item_id', 'clicked']].values)
+            imp_cols = [f'imp_{i}' for i in range(25)]
+            df[imp_cols] = pd.DataFrame(df['impressions'].values.tolist(), index=df.index)
+            for c in imp_cols:
+                df[c] = df[c].map(cv_encoding)
 
         if mode == 'train':
             logger.info('Assign target')

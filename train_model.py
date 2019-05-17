@@ -97,8 +97,8 @@ def train(train_inputs, params, add_cv_encoding=False, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': None,
-             'add_cv_encoding': False,
+    setup = {'nrows': 1000000,
+             'add_cv_encoding': True,
              'recompute_train': True,
              'retrain': True,
              'recompute_test': True}
@@ -119,7 +119,7 @@ if __name__ == '__main__':
     train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], add_cv_encoding=setup['add_cv_encoding'],
                                        recompute=setup['recompute_train'])
     # train the model
-    models = train(train_inputs, params=params, retrain=setup['retrain'])
+    models = train(train_inputs, params=params, add_cv_encoding=setup['add_cv_encoding'], retrain=setup['retrain'])
     # get the test inputs
     test_inputs = create_model_inputs(mode='test', nrows=setup['nrows'], add_cv_encoding=setup['add_cv_encoding'],
                                       recompute=setup['recompute_test'])

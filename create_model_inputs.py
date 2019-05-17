@@ -324,7 +324,7 @@ def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=Fal
         df[['pos', 'at']] = pd.DataFrame(df['last_ref_ind'].values.tolist(), index=df.index)
 
         logger.debug('Saving session_ids for verification purposes')
-        np.save(os.path.join(Filepath.cache_path, f'session_ids.npy'), df['session_id'].values)
+        np.save(os.path.join(Filepath.cache_path, f'{mode}_session_ids.npy'), df['session_id'].values)
 
         if add_cv_encoding:
             imp_cols = [f'imp_{i}' for i in range(25)]

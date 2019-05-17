@@ -99,7 +99,7 @@ def train(train_inputs, params, add_cv_encoding=False, retrain=False):
 
 if __name__ == '__main__':
     setup = {'nrows': 1000000,
-             'add_cv_encoding': True,
+             'add_cv_encoding': False,
              'recompute_train': True,
              'retrain': True,
              'recompute_test': True}

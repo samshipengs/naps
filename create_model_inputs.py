@@ -147,6 +147,7 @@ def click_view_encoding(sids, fold, m=5, nrows=None, recompute=False):
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load from existing file: {filename}')
         encoding = pd.read_csv(filename)
+        cv_encoding = dict(encoding[['item_id', 'clicked']].values)
     else:
         # only load reference and action_type
         ref_imp = load_data('train', nrows=nrows, usecols=['action_type', 'reference', 'impressions'])
@@ -184,6 +185,9 @@ def click_view_encoding(sids, fold, m=5, nrows=None, recompute=False):
         encoding = smoothed.reset_index(name='clicked')
         encoding['item_id'] = encoding['item_id'].astype(int)
 
+        # return just the dict for mapping
+        cv_encoding = dict(cv_encoding[['item_id', 'clicked']].values)
+
         # save
         encoding.to_csv(filename, index=False)
     return encoding
@@ -194,11 +198,11 @@ def save_cache(arr, name):
     np.save(os.path.join(filepath, name), arr)
 
 
-def create_model_inputs(mode, nrows=100000, recompute=False):
+def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=False):
     nrows_ = nrows if nrows is not None else 15932993
     logger.info(f"\n{'='*10} Creating {mode.upper()} model inputs with {nrows_:,} rows and recompute={recompute} {'='*10}")
-    # cv = 'cv_encoded' if add_cv_encoding else 'no_cv_encoding'
-    filename = os.path.join(Filepath.cache_path, f'{mode}_inputs.snappy')
+    cv = 'with_imp' if add_cv_encoding else 'no_imp'
+    filename = os.path.join(Filepath.cache_path, f'{mode}_inputs_{cv}.snappy')
 
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load from existing {filename}')
@@ -316,11 +320,16 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         df['last_ref_ind'] = df.apply(assign_last_ref_id_func, axis=1)
         df[['pos', 'at']] = pd.DataFrame(df['last_ref_ind'].values.tolist(), index=df.index)
 
-        # drop_cols = ['session_id', 'user_id', 'impressions', 'timestamp', 'action_type', 'reference', 'action_id_pair',
-        #              'last_ref_ind']
-
-        drop_cols = ['user_id', 'timestamp', 'action_type', 'reference', 'action_id_pair',
-                     'last_ref_ind']
+        if add_cv_encoding:
+            imp_cols = [f'imp_{i}' for i in range(25)]
+            # break the list into columns
+            df[imp_cols] = pd.DataFrame(df['impressions'].values.tolist(), index=df.index)
+            drop_cols = ['user_id', 'impressions', 'timestamp', 'action_type', 'reference', 'action_id_pair',
+                         'last_ref_ind']
+        else:
+            drop_cols = ['session_id', 'user_id', 'impressions', 'timestamp', 'action_type', 
+                         'reference', 'action_id_pair',
+                         'last_ref_ind']
         logger.info(f'Drop columns: {drop_cols}')
         df.drop(drop_cols, axis=1, inplace=True)
         logger.info(f'Generated {mode}_inputs columns: {df.columns}')

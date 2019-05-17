@@ -14,6 +14,12 @@ logger = get_logger('train_model')
 Filepath = get_data_path()
 
 
+def cv_encode(df, mapping):
+    # df[imp_cols] = pd.DataFrame(df['impressions'].values.tolist(), index=df.index)
+    imp_cols = [f'imp_{i}' for i in range(25)]
+    for c in imp_cols:
+        df[c] = df[c].map(mapping)
+
 def train(train_inputs, params, add_cv_encoding=False, retrain=False):
     cache_path = Filepath.cache_path
     model_path = Filepath.model_path
@@ -26,19 +32,22 @@ def train(train_inputs, params, add_cv_encoding=False, retrain=False):
     t_init = time.time()
     for fold, (trn_ind, val_ind) in enumerate(skf.split(targets, targets)):
         logger.info(f'Training fold {fold}: train len={len(trn_ind):,} | val len={len(val_ind):,}')
-        x_trn, x_val = train_inputs.iloc[trn_ind].values, train_inputs.iloc[val_ind].values
+        x_trn, x_val = train_inputs.iloc[trn_ind].reset_index(drop=True), train_inputs.iloc[val_ind].reset_index(drop=True)
         y_trn, y_val = targets.iloc[trn_ind], targets.iloc[val_ind]
-        sids_trn = x_trn['session_id'].unique()
         # cv encoding
         if add_cv_encoding:
+            sids_trn = x_trn['session_id'].unique()
             logger.info('Add click-view/impression encodings')
-            cv_encoding = click_view_encoding(m=5, nrows=None, recompute=False)
-            cv_encoding = dict(cv_encoding[['item_id', 'clicked']].values)
-            imp_cols = [f'imp_{i}' for i in range(25)]
-            df[imp_cols] = pd.DataFrame(df['impressions'].values.tolist(), index=df.index)
-            for c in imp_cols:
-                df[c] = df[c].map(cv_encoding)
+            cv_encoding = click_view_encoding(sids_trn, fold, m=5, nrows=None, recompute=False)
+            # cv_encoding = dict(cv_encoding[['item_id', 'clicked']].values)
+            # imp_cols = [f'imp_{i}' for i in range(25)]
+            
+            cv_encode(x_trn, cv_encoding)
+            cv_encode(x_val, cv_encoding)
+            x_trn.drop('session_id', axis=1, inplace=True)
+            x_val.drop('session_id', axis=1, inplace=True)
 
+        
         # =====================================================================================
         # create model
         model_filename = os.path.join(model_path, f'cv{fold}.model')

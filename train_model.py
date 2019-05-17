@@ -139,10 +139,9 @@ if __name__ == '__main__':
     for c, clf in enumerate(models):
         test_sub_m = test_sub.copy()
         logger.info(f'Generating predictions from model {c}')
-        cv_encoding = click_view_encoding(sids=None, fold=c, m=5, nrows=None, recompute=False)
-            # cv_encoding = dict(cv_encoding[['item_id', 'clicked']].values)
-            # imp_cols = [f'imp_{i}' for i in range(25)]
-        cv_encode(test_inputs, cv_encoding)
+        if setup['add_cv_encoding']:
+            cv_encoding = click_view_encoding(sids=None, fold=c, m=5, nrows=None, recompute=False)
+            cv_encode(test_inputs, cv_encoding)
         test_pred = clf.predict_proba(test_inputs)
         test_predictions.append(test_pred)
 

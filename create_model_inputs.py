@@ -323,6 +323,9 @@ def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=Fal
         df['last_ref_ind'] = df.apply(assign_last_ref_id_func, axis=1)
         df[['pos', 'at']] = pd.DataFrame(df['last_ref_ind'].values.tolist(), index=df.index)
 
+        logger.debug('Saving session_ids for verification purposes')
+        np.save(os.path.join(Filepath.cache_path, f'session_ids.npy'), df['session_id'].values)
+
         if add_cv_encoding:
             imp_cols = [f'imp_{i}' for i in range(25)]
             # break the list into columns

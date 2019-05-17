@@ -46,7 +46,7 @@ def get_logger(name):
 
     # add logging
     logger = logging.getLogger(name)
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
 
     # https://stackoverflow.com/questions/6729268/log-messages-appearing-twice-with-python-logging
     if not logger.handlers:

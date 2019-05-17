@@ -188,7 +188,7 @@ def compute_session_fts(df, mode):
             # 'current_filters': [last_filters],
             'session_id': 'size'}
 
-    session_grp = df[['session_id', 'timestamp', 'current_filters']].groupby('session_id')
+    session_grp = df[['session_id', 'timestamp']].groupby('session_id')
     session_fts = session_grp.agg(aggs)
     session_fts.columns = ['_'.join(col).strip() for col in session_fts.columns.values]
     logger.info(f'Session features generated: {list(session_fts.columns)}')
@@ -259,15 +259,11 @@ def save_cache(arr, name):
 def create_model_inputs(mode, nrows=100000, recompute=False):
     nrows_ = nrows if nrows is not None else 15932993
     logger.info(f"\n{'='*10} Creating {mode.upper()} model inputs with {nrows_:,} rows and recompute={recompute} {'='*10}")
-    filepath = Filepath.cache_path
-    filenames = ['numerics', 'impressions', 'prices', 'cfilters']
-    if mode == 'train':
-        filenames.append('targets')
-    filepaths = [os.path.join(filepath, f'{mode}_{fn}.npy') for fn in filenames]
+    filename = os.path.join(Filepath.cache_path, f'{mode}_inputs.snappy')
 
-    if sum([os.path.isfile(f) for f in filepaths]) == len(filepaths) and not recompute:
-        logger.info(f'Load from existing {filepaths}')
-        model_inputs = {filenames[k]: np.load(v) for k, v in enumerate(filepaths)}
+    if os.path.isfile(filename) and not recompute:
+        logger.info(f'Load from existing {filename}')
+        df = pd.read_parquet(filename)
     else:
         logger.info(f'Prepare {mode} data')
         t_init = time.time()
@@ -293,9 +289,9 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
             test_sub.to_csv(os.path.join(Filepath.sub_path, 'test_sub.csv'), index=False)
             del test_sub
 
-        # logger.info('Lower case current filters and split to list')
-        # df['cfs'] = df['current_filters_last_filters'].str.lower().str.split('|')
-        df['nf'] = df['current_filters_last_filters'].str.split('|').str.len()
+        # number of current filters
+        df['nf'] = df['current_filters'].str.split('|').str.len()
+        df.drop('current_filters', axis=1, inplace=True)
 
         logger.info('Split prices str to list and convert to int')
         df['prices'] = df['prices'].str.split('|')
@@ -303,8 +299,10 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         logger.info('Pad 0s for prices length shorter than 25')
         df['time_steps'] = df['prices'].str.len()
         padding_mask = df['time_steps'] < 25
+        df.drop('time_steps', axis=1, inplace=True)
         df.loc[padding_mask, 'prices'] = df.loc[padding_mask, 'prices'].apply(lambda x: np.pad(x, (0, 25-len(x)),
-                                                                                               mode='constant'))
+                                                                                               mode='constant',
+                                                                                               constant_values=np.nan))
         # logger.info('Log1p-transform prices')
         # df['prices'] = df['prices'].apply(lambda p: np.log1p(p))
         logger.info('Normalizing price')
@@ -315,10 +313,8 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
             p_arr = np.array(ps)
             return p_arr / (p_arr.max())
         df['prices_percentage'] = df['prices'].apply(normalize)
-        # add percetange of log
-
-
-
+        df[[f'price_{i}' for i in range(25)]] = pd.DataFrame(df['prices_percentage'].values.tolist(), index=df.index)
+        df.drop(['prices', 'prices_percentage'], axis=1, inplace=True)
 
         logger.info('Split impression str to list of impressions')
         df['impressions'] = df['impressions'].str.split('|')
@@ -352,30 +348,12 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
 
         logger.info('Assign location of previous reference id')
 
-        # def assign_last_ref_id(row, divide=True):
-        #     ref = row['reference_last_reference_id']
-        #     # although reference_id got converted to int, but the reference_last_reference_id was calculated
-        #     # when it was still str value, so here we look up the index in str of impressions
-        #     imp = [str(i) for i in row['impressions']]
-        #
-        #     if pd.isna(ref):
-        #         return np.nan
-        #     else:
-        #         if ref in imp:
-        #             if divide:
-        #                 return (imp.index(ref) + 1) / len(imp)
-        #             else:
-        #                 return imp.index(ref) + 1
-        #         else:
-        #             return np.nan
-        
-        #_, n_unique_actions = create_action_type_mapping()
-
         def assign_last_ref_id(row, divide=True):
             action_id_pair = row['action_id_pair']
             if pd.isna(action_id_pair):
-                return np.zeros(2, dtype=int)
-            # ref = row['reference_last_reference_id']
+                # return np.zeros(2, dtype=int)
+                return [np.nan]*2
+
             # although reference_id got converted to int, but the reference_last_reference_id was calculated
             # when it was still str value, so here we look up the index in str of impressions
             else:
@@ -386,108 +364,32 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
                         pos = (imp.index(ref) + 1) / len(imp)
                     else:
                         pos = imp.index(ref) + 1
-                    if action_type == 2:
-                        return [pos, 1]
-                    else:
-                        return [pos, 0]
+                    # if action_type == 2:
+                    #     return [pos, 1]
+                    # else:
+                    #     return [pos, 0]
+                    return [pos, action_type]
                 else:
-                    return np.zeros(2, dtype=int)
+                    return [np.nan, action_type]
 
         logger.info('Divide last_ref_id by 25')
         assign_last_ref_id_func = partial(assign_last_ref_id, divide=True)
         df['last_ref_ind'] = df.apply(assign_last_ref_id_func, axis=1)
-        
-        # create meta ohe
-        logger.info('Load meta data')
-        meta_df = load_data('item_metadata')
-        logger.info('Lower and split properties str to list')
-        meta_df['properties'] = meta_df['properties'].str.lower().str.split('|')
-        logger.info('Get all unique properties')
-        unique_properties = list(set(np.concatenate(meta_df['properties'].values)))
-        property2natural = {v: k for k, v in enumerate(unique_properties)}
-        n_properties = len(unique_properties)
-        logger.info(f'Total number of unique meta properties: {n_properties}')
-        logger.info('Convert the properties to ohe and superpose for each item_id')
-        meta_df['properties'] = meta_df['properties'].apply(lambda ps: [property2natural[p] for p in ps])
-        meta_df['properties'] = meta_df['properties'].apply(lambda ps: np.sum(np.eye(n_properties, dtype=int)[ps],
-                                                                              axis=0))
-        logger.info('Create mappings')
-        meta_mapping = dict(meta_df[['item_id', 'properties']].values)
-        logger.info('Saving meta mapping')
-        np.save(os.path.join(filepath, 'meta_mapping.npy'), meta_mapping)
-        # add a mapping (all zeros) for the padded impression ids
-        meta_mapping[0] = np.zeros(n_properties, dtype=int)
-        del meta_df, unique_properties, property2natural
-        gc.collect()
+        df[['pos', 'at']] = pd.DataFrame(df['last_ref_ind'].values.tolist(), index=df.index)
 
-        logger.info('Apply meta ohe mapping to impressions (this could take some time)')
-        df['impressions'] = (df['impressions'].apply(lambda imps: np.vstack([meta_mapping[i]
-                                                     if i in meta_mapping.keys()
-                                                     else np.zeros(n_properties, dtype=int)
-                                                     for i in imps])))
-        del meta_mapping
-        gc.collect()
-
-        logger.info('Create ohe superposition of filters')
-        cfs2natural, n_cfs = create_cfs_mapping()
-        logger.info(f'There are total {n_cfs} unique filters')
-
-        logger.info('Apply ohe superposition of filters to each records')
-        df.loc[df['cfs'].notna(), 'cfs'] = (df.loc[df['cfs'].notna(), 'cfs']
-                                              .apply(lambda cfs: [cfs2natural[cf] for cf in cfs]))
-        del cfs2natural
-        gc.collect()
-        # zeros if the cfs is nan (checked with type(cfs) is list not float
-        df['cfs'] = (df['cfs'].apply(lambda cfs: np.sum(np.eye(n_cfs, dtype=int)[cfs], axis=0)
-                                     if type(cfs) == list else np.zeros(n_cfs, dtype=int)))
-
-        logger.info('Grabbing list of inputs')
-
-        # PRICES
-        prices = np.array(list(df['prices'].values))
-        df.drop('prices', axis=1, inplace=True)
-        save_cache(prices, f'{mode}_prices.npy')
-
-        logger.info('Getting impressions')
-        # IMPRESSIONS
-        impressions = np.array(list(df['impressions'].values))
-        df.drop('impressions', axis=1, inplace=True)
-        save_cache(impressions, f'{mode}_impressions.npy')
-
-        logger.info('Getting current_filters')
-        # CURRENT_FILTERS
-        cfilters = np.array(list(df['cfs'].values))
-        df.drop('cfs', axis=1, inplace=True)
-        save_cache(cfilters, f'{mode}_cfilters.npy')
-
-        logger.info('Getting numerics')
-        # numerics
-        num_cols = ['session_id_size', 'timestamp_dwell_time_prior_clickout']
-        logger.info('Filling nans with value=-1')
-        for c in num_cols:
-            df[c] = df[c].fillna(-1)
-        numerics = np.concatenate((df[num_cols].values, np.array(list(df['last_ref_ind'].values))), axis=1)
-        df.drop(num_cols, axis=1, inplace=True)
-        save_cache(numerics, f'{mode}_numerics.npy')
-
-        model_inputs = {'numerics': numerics, 'impressions': impressions, 'prices': prices,
-                        'cfilters': cfilters}
-
-        if mode == 'train':
-            logger.info('Getting targets')
-            # TARGETS
-            targets = df['target'].values
-            df.drop('target', axis=1, inplace=True)
-            save_cache(targets, 'train_targets.npy')
-            model_inputs['targets'] = targets
+        drop_cols = ['session_id', 'user_id', 'impressions', 'timestamp', 'action_type', 'reference', 'action_id_pair',
+                     'last_ref_ind']
+        logger.info(f'Drop columns: {drop_cols}')
+        df.drop(drop_cols, axis=1, inplace=True)
+        logger.info(f'Generated {mode}_inputs columns: {df.columns}')
         logger.info(f'Total {mode} data input creation took: {(time.time()-t_init)/60:.2f} mins')
-
-    return model_inputs
+        df.to_parquet(filename)
+    return df
 
 
 if __name__ == '__main__':
     args = {'mode': 'train',
             'nrows': 1000000,
-            'recompute': False}
+            'recompute': True}
     logger.info(f'Creating data input: {args}')
     _ = create_model_inputs(**args)

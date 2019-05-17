@@ -5,7 +5,7 @@ import numpy as np
 from sklearn.model_selection import StratifiedKFold
 import catboost as cat
 
-from create_model_inputs import create_model_inputs
+from create_model_inputs import create_model_inputs, click_view_encoding
 from utils import get_logger, get_data_path, check_gpu
 from plots import plot_hist, confusion_matrix, plot_imp_cat
 
@@ -14,7 +14,7 @@ logger = get_logger('train_model')
 Filepath = get_data_path()
 
 
-def train(train_inputs, params, retrain=False):
+def train(train_inputs, params, add_cv_encoding=False, retrain=False):
     cache_path = Filepath.cache_path
     model_path = Filepath.model_path
 
@@ -28,6 +28,17 @@ def train(train_inputs, params, retrain=False):
         logger.info(f'Training fold {fold}: train len={len(trn_ind):,} | val len={len(val_ind):,}')
         x_trn, x_val = train_inputs.iloc[trn_ind].values, train_inputs.iloc[val_ind].values
         y_trn, y_val = targets.iloc[trn_ind], targets.iloc[val_ind]
+        sids_trn = x_trn['session_id'].unique()
+        # cv encoding
+        if add_cv_encoding:
+            logger.info('Add click-view/impression encodings')
+            cv_encoding = click_view_encoding(m=5, nrows=None, recompute=False)
+            cv_encoding = dict(cv_encoding[['item_id', 'clicked']].values)
+            imp_cols = [f'imp_{i}' for i in range(25)]
+            df[imp_cols] = pd.DataFrame(df['impressions'].values.tolist(), index=df.index)
+            for c in imp_cols:
+                df[c] = df[c].map(cv_encoding)
+
         # =====================================================================================
         # create model
         model_filename = os.path.join(model_path, f'cv{fold}.model')

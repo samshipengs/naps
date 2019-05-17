@@ -80,33 +80,6 @@ def prepare_data(mode, convert_action_type=True, nrows=None, recompute=True):
     return df
 
 
-# def create_cfs_mapping(recompute=False):
-#     filepath = Filepath.cache_path
-#     filename = os.path.join(filepath, 'filters_mapping.npy')
-#
-#     if os.path.isfile(filename) and not recompute:
-#         logger.info(f'Load cfs mapping from existing: {filename}')
-#         cfs2natural = np.load(filename).item()
-#         n_unique_filters = len(cfs2natural)
-#     else:
-#         train = load_data('train', nrows=None, usecols=['current_filters'])
-#         test = load_data('test', nrows=None, usecols=['current_filters'])
-#         train = train[train['current_filters'].notna()]
-#         test = test[test['current_filters'].notna()]
-#         df = pd.concat([train, test], axis=0, ignore_index=True)
-#         del train, test
-#         gc.collect()
-#
-#         df['current_filters'] = df['current_filters'].str.lower().str.split('|')
-#         # get unique cfs
-#         unique_cfs = list(set(np.concatenate(df['current_filters'].values)))
-#         cfs2natural = {v: k for k, v in enumerate(unique_cfs)}
-#         logger.info('Saving filter mappings')
-#         np.save(filename, cfs2natural)
-#         n_unique_filters = len(unique_cfs)
-#     return cfs2natural, n_unique_filters
-
-
 # create some session features
 def session_duration(ts):
     if len(ts) == 1:
@@ -140,23 +113,6 @@ def last_reference_id(grp, mode):
         return grp[mask]['action_type'].iloc[last_ref_loc], grp[mask]['reference'].iloc[last_ref_loc]
 
 
-# def compute_session_fts(df, mode):
-#     last_rid = partial(last_reference_id, mode=mode)
-#     aggs = {'timestamp': [session_duration, dwell_time_prior_clickout],
-#             'current_filters': [last_filters],
-#             'session_id': 'size',
-#             'reference': [last_rid]}
-#     session_grp = df.groupby('session_id')
-#     session_fts = session_grp.agg(aggs)
-#     session_fts.columns = ['_'.join(col).strip() for col in session_fts.columns.values]
-#     logger.info(f'Session features generated: {list(session_fts.columns)}')
-#     session_fts.reset_index(inplace=True)
-#
-#     # add last_reference_id and its action_type
-#
-#     return pd.merge(df, session_fts, on='session_id')
-
-
 def compute_session_fts(df, mode):
     # last_rid = partial(last_reference_id, mode=mode)
     aggs = {'timestamp': [session_duration, dwell_time_prior_clickout],
@@ -178,7 +134,7 @@ def compute_session_fts(df, mode):
     return pd.merge(df, session_fts, on='session_id')
 
 
-def click_view_encoding(m=5, nrows=None, recompute=False):
+def click_view_encoding(sids, fold, m=5, nrows=None, recompute=False):
     """
     encode click and view
     :param m: smoothing factor
@@ -187,13 +143,16 @@ def click_view_encoding(m=5, nrows=None, recompute=False):
     :return:
     """
     filepath = Filepath.cache_path
-    filename = os.path.join(filepath, 'clickview_encodings.csv')
+    filename = os.path.join(filepath, f'fold{fold}_clickview_encodings.csv')
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load from existing file: {filename}')
         encoding = pd.read_csv(filename)
     else:
         # only load reference and action_type
         ref_imp = load_data('train', nrows=nrows, usecols=['action_type', 'reference', 'impressions'])
+        # only select the data whose session_ids are given in sids
+        ref_imp = ref_imp[ref_imp['session_id'].isin(sids)].reset_index(drop=True)
+        # only get the row that is click-out action
         ref_imp = ref_imp.loc[ref_imp.action_type == 'clickout item'].reset_index(drop=True)
         ref_imp.drop('action_type', axis=1, inplace=True)
         # make sure impressions are not nan
@@ -235,11 +194,11 @@ def save_cache(arr, name):
     np.save(os.path.join(filepath, name), arr)
 
 
-def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=False):
+def create_model_inputs(mode, nrows=100000, recompute=False):
     nrows_ = nrows if nrows is not None else 15932993
     logger.info(f"\n{'='*10} Creating {mode.upper()} model inputs with {nrows_:,} rows and recompute={recompute} {'='*10}")
-    cv = 'cv_encoded' if add_cv_encoding else 'no_cv_encoding'
-    filename = os.path.join(Filepath.cache_path, f'{mode}_inputs_{cv}.snappy')
+    # cv = 'cv_encoded' if add_cv_encoding else 'no_cv_encoding'
+    filename = os.path.join(Filepath.cache_path, f'{mode}_inputs.snappy')
 
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load from existing {filename}')
@@ -304,15 +263,6 @@ def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=Fal
         df.loc[padding_mask, 'impressions'] = (df.loc[padding_mask, 'impressions']
                                                  .apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant')))
 
-        if add_cv_encoding:
-            logger.info('Add click-view/impression encodings')
-            cv_encoding = click_view_encoding(m=5, nrows=None, recompute=False)
-            cv_encoding = dict(cv_encoding[['item_id', 'clicked']].values)
-            imp_cols = [f'imp_{i}' for i in range(25)]
-            df[imp_cols] = pd.DataFrame(df['impressions'].values.tolist(), index=df.index)
-            for c in imp_cols:
-                df[c] = df[c].map(cv_encoding)
-
         if mode == 'train':
             logger.info('Assign target')
             logger.info('Convert reference id to int')
@@ -366,7 +316,10 @@ def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=Fal
         df['last_ref_ind'] = df.apply(assign_last_ref_id_func, axis=1)
         df[['pos', 'at']] = pd.DataFrame(df['last_ref_ind'].values.tolist(), index=df.index)
 
-        drop_cols = ['session_id', 'user_id', 'impressions', 'timestamp', 'action_type', 'reference', 'action_id_pair',
+        # drop_cols = ['session_id', 'user_id', 'impressions', 'timestamp', 'action_type', 'reference', 'action_id_pair',
+        #              'last_ref_ind']
+
+        drop_cols = ['user_id', 'timestamp', 'action_type', 'reference', 'action_id_pair',
                      'last_ref_ind']
         logger.info(f'Drop columns: {drop_cols}')
         df.drop(drop_cols, axis=1, inplace=True)

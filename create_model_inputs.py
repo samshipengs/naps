@@ -207,7 +207,7 @@ def click_view_encoding(m=5, nrows=None, recompute=False):
     """
     encode click and view
     :param m: smoothing factor
-    :param nrows: load numebr of rows data
+    :param nrows: load number of rows data
     :param recompute:
     :return:
     """
@@ -221,18 +221,22 @@ def click_view_encoding(m=5, nrows=None, recompute=False):
         ref_imp = load_data('train', nrows=nrows, usecols=['action_type', 'reference', 'impressions'])
         ref_imp = ref_imp.loc[ref_imp.action_type == 'clickout item'].reset_index(drop=True)
         ref_imp.drop('action_type', axis=1, inplace=True)
-        ref_imp = ref_imp[~ref_imp.reference.str.contains('[a-zA-Z]')].reset_index(drop=True)
+        # make sure impressions are not nan
+        ref_imp = ref_imp[ref_imp['impressions'].notna()].reset_index(drop=True)
+        # do not encode reference that is not int
+        ref_imp = ref_imp[~ref_imp['reference'].str.contains('[a-zA-Z]')].reset_index(drop=True)
 
         # create list of impressions
         ref_imp['impressions'] = ref_imp['impressions'].str.split('|')
         # remove the clicked id from impressions
-        ref_imp['impressions'] = ref_imp.apply(lambda row: list(set(row.impressions) - set([row.reference])), axis=1)
+        ref_imp['impressions'] = ref_imp.apply(lambda row: list(set(row['impressions']) - set(row['reference'])), axis=1)
 
         # create 0 for impressions (viewed) and 1 for clicked
-        imps = ref_imp.impressions.values
-        imps = [j for i in imps for j in i]
+        # imps = ref_imp['impressions'].values
+        # imps = [j for i in imps for j in i]
+        imps = np.concatenate(ref_imp['impressions'].values)
         click_imp = pd.concat([pd.Series([0] * len(imps), index=imps),
-                               pd.Series([1] * len(ref_imp), index=ref_imp.reference.values)])
+                               pd.Series([1] * len(ref_imp), index=ref_imp['reference'].values)])
         click_imp.index.name = 'item_id'
         click_imp = pd.DataFrame(click_imp, columns=['clicked']).reset_index()
 
@@ -323,6 +327,13 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         logger.info('Pad 0s for impressions length shorter than 25')
         df.loc[padding_mask, 'impressions'] = (df.loc[padding_mask, 'impressions']
                                                  .apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant')))
+        logger.info('Add click-view/impression encodings')
+        cv_encoding = click_view_encoding(m=5, nrows=None, recompute=False)
+        cv_encoding = dict(cv_encoding[['item_id', 'clicked']].values)
+        imp_cols = [f'imp_{i}' for i in range(25)]
+        df[imp_cols] = pd.DataFrame(df['impressions'].values.tolist(), index=df.index)
+        for c in imp_cols:
+            df[c] = df[c].map(cv_encoding)
 
         if mode == 'train':
             logger.info('Assign target')

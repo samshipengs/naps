@@ -123,31 +123,6 @@ def dwell_time_prior_clickout(ts):
         return (ts_sorted.iloc[-1] - ts_sorted.iloc[-2]).total_seconds()
 
 
-# def last_filters(cf):
-#     mask = cf.notna()
-#     if mask.sum() == 0:
-#         return np.nan
-#     else:
-#         return cf[mask].iloc[-1]
-
-
-# def last_reference_id(rids, mode):
-#     mask = rids.notna()
-#     if mode == 'train':
-#         n = 1
-#         last_ref_loc = -2
-#     elif mode == 'test':
-#         n = 0
-#         last_ref_loc = -1
-#     else:
-#         raise ValueError(f'Invalid mode: {mode}')
-#     if mask.sum() <= n:
-#         return np.nan
-#     else:
-#         # the second last reference id i.e. the one before click out
-#         return rids[mask].iloc[last_ref_loc]
-
-
 def last_reference_id(grp, mode):
     mask = grp['reference'].notna()
     if mode == 'train':

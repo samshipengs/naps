@@ -285,6 +285,9 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         assign_last_ref_id_func = partial(assign_last_ref_id, divide=True)
         df['last_ref_ind'] = df.apply(assign_last_ref_id_func, axis=1)
         df[['pos', 'at']] = pd.DataFrame(df['last_ref_ind'].values.tolist(), index=df.index)
+        # convert at(action_atype to int)
+        at_mapping, _ = create_action_type_mapping()
+        df['at'] = df['at'].map(at_mapping)
 
         logger.debug('Saving session_ids for verification purposes')
         np.save(os.path.join(Filepath.cache_path, f'{mode}_session_ids.npy'), df['session_id'].values)
@@ -295,7 +298,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
 
         logger.info(f'Drop columns: {drop_cols}')
         df.drop(drop_cols, axis=1, inplace=True)
-        logger.info(f'Generated {mode}_inputs columns:\n{df.columns}')
+        logger.info(f'Generated {mode}_inputs with shape: ({df.shape[0]:,}, {df.shape[1]}) and columns:\n{df.columns}')
         logger.info(f'Number of nans in each columns:\n{df.isna().sum()}')
         logger.info(f'Total {mode} data input creation took: {(time.time()-t_init)/60:.2f} mins')
         df.to_parquet(filename)

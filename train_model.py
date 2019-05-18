@@ -14,11 +14,10 @@ logger = get_logger('train_model')
 Filepath = get_data_path()
 
 
-def cv_encode(df, mapping):
-    # df[imp_cols] = pd.DataFrame(df['impressions'].values.tolist(), index=df.index)
-    imp_cols = [f'imp_{i}' for i in range(25)]
-    for col in imp_cols:
-        df[col] = df[col].map(mapping)
+# def cv_encode(df, mapping):
+#     imp_cols = [f'imp_{i}' for i in range(25)]
+#     for col in imp_cols:
+#         df[col] = df[col].map(mapping)
 
 
 def train(train_inputs, params, retrain=False):
@@ -41,24 +40,17 @@ def train(train_inputs, params, retrain=False):
         model_filename = os.path.join(model_path, f'cv{fold}.model')
         if os.path.isfile(model_filename) and not retrain:
             logger.info(f'Loading model from existing {model_filename}')
-            # model = load_model(model_filename)
             clf = cat.CatBoostClassifier()  # parameters not required.
             clf.load_model(model_filename)
         else:
             # train model
             clf = cat.CatBoostClassifier(**params)
-            # specify categorical index
-            categorical_ind = [k for k, v in enumerate(x_trn.columns) if v == 'at']
-            x_trn['at'] = x_trn['at'].fillna(-1)
-            x_val['at'] = x_val['at'].fillna(-1)
-            logger.debug(f'categorical index:{categorical_ind}')
             clf.fit(x_trn, y_trn,
-                    cat_features=categorical_ind,
                     eval_set=(x_val, y_val),
                     early_stopping_rounds=100,
                     verbose=100,
                     plot=False)
-            trn_imp = clf.get_feature_importance(data=cat.Pool(data=x_trn, label=y_trn),#, cat_features=),
+            trn_imp = clf.get_feature_importance(data=cat.Pool(data=x_trn, label=y_trn),
                                                  prettified=True,
                                                  type='FeatureImportance')
 
@@ -89,8 +81,8 @@ def train(train_inputs, params, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 5000000,
-             'recompute_train': True,
+    setup = {'nrows': None,
+             'recompute_train': False,
              'retrain': True,
              'recompute_test': True}
 

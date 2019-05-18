@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import datetime
 import os
-import gc
 from functools import partial
 from utils import load_data, get_logger, get_data_path
 from clean_session import preprocess_sessions
@@ -38,7 +37,7 @@ def create_action_type_mapping(recompute=False):
     return action_type2natural, n_unique_actions
 
 
-def prepare_data(mode, convert_action_type=True, nrows=None, recompute=True):
+def prepare_data(mode, nrows=None, recompute=True):
     # first load data
     if mode == 'train':
         df = load_data(mode, nrows=nrows)
@@ -59,10 +58,6 @@ def prepare_data(mode, convert_action_type=True, nrows=None, recompute=True):
     usecols = ['user_id', 'session_id', 'timestamp', 'step', 'action_type', 'current_filters',
                'reference', 'impressions', 'prices']
     df = df[usecols]
-    if convert_action_type:
-        logger.info('Converting action_types to int (natural number)')
-        action_type2natural, _ = create_action_type_mapping(recompute=False)
-        df['action_type'] = df['action_type'].map(action_type2natural)
     logger.info('Sort df by user_id, session_id, timestamp, step')
     df = df.sort_values(by=['user_id', 'session_id', 'timestamp', 'step']).reset_index(drop=True)
     flogger(df, f'Prepared {mode} data')
@@ -113,7 +108,7 @@ def previous_clickouts(grp):
         return [1. if imp in prev_grp_clickouts else 0. for imp in last_imps]
 
 
-def compute_session_fts(df, mode, recompute=False):
+def compute_session_fts(df, mode, add_prev_cos=False, recompute=False):
     filename = os.path.join(Filepath.cache_path, f'{mode}_session_fts.snappy')
     if os.path.isfile(filename) and not recompute:
         # so far this should not be used as in prev_cos has list
@@ -138,15 +133,15 @@ def compute_session_fts(df, mode, recompute=False):
         action_id_pair = session_grp.apply(last_rid).reset_index(name='action_id_pair')
         df = pd.merge(df, action_id_pair, on='session_id', how='left')
 
-        # add previous click-out info
-        logger.info('Add previous click-out info')
-        df['nimps'] = df['impressions'].str.split('|').str.len()
-        session_grp = df[['session_id', 'action_type', 'reference', 'impressions', 'nimps']].groupby('session_id')
-        prev_cos = session_grp.apply(previous_clickouts).reset_index(name='prev_cos')
-        prev_cos.to_csv('test_prev_cos.csv', index=False)
-        df = pd.merge(df, prev_cos, on='session_id', how='left')
-        df.drop('nimps', axis=1, inplace=True)
-
+        if add_prev_cos:
+            # add previous czlick-out info
+            logger.info('Add previous click-out info')
+            df['nimps'] = df['impressions'].str.split('|').str.len()
+            session_grp = df[['session_id', 'action_type', 'reference', 'impressions', 'nimps']].groupby('session_id')
+            prev_cos = session_grp.apply(previous_clickouts).reset_index(name='prev_cos')
+            prev_cos.to_csv('test_prev_cos.csv', index=False)
+            df = pd.merge(df, prev_cos, on='session_id', how='left')
+            df.drop('nimps', axis=1, inplace=True)
     return df
 
 
@@ -157,7 +152,7 @@ def save_cache(arr, name):
 
 def create_model_inputs(mode, nrows=100000, recompute=False):
     nrows_ = nrows if nrows is not None else 15932993
-    logger.info(f"\n{'='*10} Creating {mode.upper()} model inputs with {nrows_:,} rows and recompute={recompute} {'='*10}")
+    logger.info(f"\n{'='*10}\nCreating {mode.upper()} model inputs with {nrows_:,} rows and recompute={recompute}\n{'='*10}")
     filename = os.path.join(Filepath.cache_path, f'{mode}_inputs.snappy')
 
     if os.path.isfile(filename) and not recompute:
@@ -166,7 +161,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
     else:
         logger.info(f'Prepare {mode} data')
         t_init = time.time()
-        df = prepare_data(mode, convert_action_type=False, nrows=nrows, recompute=True)
+        df = prepare_data(mode, nrows=nrows, recompute=True)
         logger.info('Compute session features')
         df = compute_session_fts(df, mode)
 
@@ -273,10 +268,6 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
                         pos = (imp.index(ref) + 1) / len(imp)
                     else:
                         pos = imp.index(ref) + 1
-                    # if action_type == 2:
-                    #     return [pos, 1]
-                    # else:
-                    #     return [pos, 0]
                     return [pos, action_type]
                 else:
                     return [np.nan, action_type]
@@ -285,6 +276,9 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         assign_last_ref_id_func = partial(assign_last_ref_id, divide=True)
         df['last_ref_ind'] = df.apply(assign_last_ref_id_func, axis=1)
         df[['pos', 'at']] = pd.DataFrame(df['last_ref_ind'].values.tolist(), index=df.index)
+        # convert at(action_atype to int)
+        at_mapping, _ = create_action_type_mapping()
+        df['at'] = df['at'].map(at_mapping)
 
         logger.debug('Saving session_ids for verification purposes')
         np.save(os.path.join(Filepath.cache_path, f'{mode}_session_ids.npy'), df['session_id'].values)

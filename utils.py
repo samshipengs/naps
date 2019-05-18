@@ -53,7 +53,7 @@ def get_logger(name):
         # create a file handler
         current_time = dt.now().strftime('%m-%d')
         file_handler = logging.FileHandler(os.path.join(logger_path, f'{current_time}.log'))
-        file_handler.setLevel(logging.INFO)
+        file_handler.setLevel(logging.DEBUG)
         # create a logging format
         formats = '[%(asctime)s - %(name)s-%(lineno)d - %(funcName)s - %(levelname)s] %(message)s'
         file_formatter = logging.Formatter(formats, '%m-%d %H:%M:%S')
@@ -63,7 +63,7 @@ def get_logger(name):
 
         # console handler
         c_handler = logging.StreamHandler()
-        c_handler.setLevel(logging.INFO)
+        c_handler.setLevel(logging.DEBUG)
         c_formatter = logging.Formatter(formats, '%m-%d %H:%M:%S')
         c_handler.setFormatter(c_formatter)
         logger.addHandler(c_handler)

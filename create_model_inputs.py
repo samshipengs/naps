@@ -64,13 +64,19 @@ def prepare_data(mode, nrows=None, recompute=True):
     return df
 
 
+## create some session features
+# def session_duration(ts):
+#     if len(ts) == 1:
+#         return np.nan
+#     else:
+#         return (ts.max() - ts.min()).total_seconds()
 # create some session features
+
 def session_duration(ts):
     if len(ts) == 1:
         return np.nan
     else:
         return (ts.max() - ts.min()).total_seconds()
-
 
 def dwell_time_prior_clickout(ts):
     if len(ts) == 1:
@@ -143,6 +149,42 @@ def compute_session_fts(df, mode, add_prev_cos=False, recompute=False):
             df = pd.merge(df, prev_cos, on='session_id', how='left')
             df.drop('nimps', axis=1, inplace=True)
     return df
+
+# def compute_session_fts(df, mode, add_prev_cos=False, recompute=False):
+#     filename = os.path.join(Filepath.cache_path, f'{mode}_session_fts.snappy')
+#     if os.path.isfile(filename) and not recompute:
+#         # so far this should not be used as in prev_cos has list
+#         df = pd.read_parquet(filename)
+#     else:
+#         # last_rid = partial(last_reference_id, mode=mode)
+#         aggs = {'timestamp': [session_duration, dwell_time_prior_clickout],
+#                 # 'current_filters': [last_filters],
+#                 'session_id': 'size'}
+#
+#         session_grp = df[['session_id', 'timestamp']].groupby('session_id')
+#         session_fts = session_grp.agg(aggs)
+#         session_fts.columns = ['_'.join(col).strip() for col in session_fts.columns.values]
+#         logger.info(f'Session features generated: {list(session_fts.columns)}')
+#         session_fts.reset_index(inplace=True)
+#         df = pd.merge(df, session_fts, on='session_id')
+#
+#         # add last_reference_id and its action_type
+#         logger.info('Add last_reference_id and its action_type')
+#         last_rid = partial(last_reference_id, mode=mode)
+#         session_grp = df[['session_id', 'action_type', 'reference']].groupby('session_id')
+#         action_id_pair = session_grp.apply(last_rid).reset_index(name='action_id_pair')
+#         df = pd.merge(df, action_id_pair, on='session_id', how='left')
+#
+#         if add_prev_cos:
+#             # add previous czlick-out info
+#             logger.info('Add previous click-out info')
+#             df['nimps'] = df['impressions'].str.split('|').str.len()
+#             session_grp = df[['session_id', 'action_type', 'reference', 'impressions', 'nimps']].groupby('session_id')
+#             prev_cos = session_grp.apply(previous_clickouts).reset_index(name='prev_cos')
+#             prev_cos.to_csv('test_prev_cos.csv', index=False)
+#             df = pd.merge(df, prev_cos, on='session_id', how='left')
+#             df.drop('nimps', axis=1, inplace=True)
+#     return df
 
 
 def save_cache(arr, name):

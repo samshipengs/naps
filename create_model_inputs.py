@@ -241,7 +241,7 @@ def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=Fal
 
         logger.info('Split prices str to list and convert to int')
         df['prices'] = df['prices'].str.split('|')
-        df['prices'] = df['prices'].apply(lambda x: [int(p) for p in x])
+        df['prices'] = df['prices'].apply(lambda x: [float(p) for p in x])
         logger.info('Pad 0s for prices length shorter than 25')
         df['time_steps'] = df['prices'].str.len()
         padding_mask = df['time_steps'] < 25
@@ -264,6 +264,7 @@ def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=Fal
 
         logger.info('Split impression str to list of impressions')
         df['impressions'] = df['impressions'].str.split('|')
+        df['n_imps'] = df['impressions'].str.len()
         logger.info('Convert impression str to int')
         df['impressions'] = df['impressions'].apply(lambda x: [int(i) for i in x])
         logger.info('Pad 0s for impressions length shorter than 25')
@@ -338,7 +339,7 @@ def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=Fal
                          'last_ref_ind']
         logger.info(f'Drop columns: {drop_cols}')
         df.drop(drop_cols, axis=1, inplace=True)
-        logger.info(f'Generated {mode}_inputs columns: {df.columns}')
+        logger.info(f'Generated {mode}_inputs columns:\n{df.columns}')
         logger.info(f'Total {mode} data input creation took: {(time.time()-t_init)/60:.2f} mins')
         df.to_parquet(filename)
     return df

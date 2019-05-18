@@ -60,8 +60,13 @@ def train(train_inputs, params, add_cv_encoding=False, retrain=False):
         else:
             # train model
             clf = cat.CatBoostClassifier(**params)
+            # specify categorical index
+            categorical_ind = [k for k, v in enumerate(x_trn.columns) if v == 'at']
+            x_trn['at'] = x_trn['at'].fillna(-1)
+            x_val['at'] = x_val['at'].fillna(-1)
+            logger.debug(f'categorical index:{categorical_ind}')
             clf.fit(x_trn, y_trn,
-                    # cat_features=categorical_ind,
+                    cat_features=categorical_ind,
                     eval_set=(x_val, y_val),
                     early_stopping_rounds=100,
                     verbose=100,
@@ -69,11 +74,10 @@ def train(train_inputs, params, add_cv_encoding=False, retrain=False):
             trn_imp = clf.get_feature_importance(data=cat.Pool(data=x_trn, label=y_trn),#, cat_features=),
                                                  prettified=True,
                                                  type='FeatureImportance')
-            # print(trn_imp)
 
             # plot_imp_cat(trn_imp, 'train')
-            if trn_imp != []:
-                plot_imp_cat(trn_imp, fold) #, mrr={'train': trn_mrr, 'val': val_mrr})
+            if trn_imp:
+                plot_imp_cat(trn_imp, fold)
 
             clf.save_model(model_filename)
 
@@ -98,9 +102,9 @@ def train(train_inputs, params, add_cv_encoding=False, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 1000000,
+    setup = {'nrows': None,
              'add_cv_encoding': False,
-             'recompute_train': True,
+             'recompute_train': False,
              'retrain': True,
              'recompute_test': True}
 
@@ -108,7 +112,7 @@ if __name__ == '__main__':
     params = {'loss_function': 'MultiClass',
               'custom_metric': ['MultiClass', 'Accuracy'],
               'eval_metric': 'MultiClass',
-              'iterations': 3000,
+              'iterations': 5000,
               'learning_rate': 0.02,
               'depth': 8,
               'task_type': device}

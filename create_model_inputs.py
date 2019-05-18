@@ -210,7 +210,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         # over all records
         def normalize(ps):
             p_arr = np.array(ps)
-            return p_arr / (p_arr.max())
+            return p_arr / np.nanmax(p_arr)
         df['prices_percentage'] = df['prices'].apply(normalize)
         df[[f'price_{i}' for i in range(25)]] = pd.DataFrame(df['prices_percentage'].values.tolist(), index=df.index)
         df.drop(['prices', 'prices_percentage'], axis=1, inplace=True)

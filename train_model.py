@@ -17,8 +17,8 @@ Filepath = get_data_path()
 def cv_encode(df, mapping):
     # df[imp_cols] = pd.DataFrame(df['impressions'].values.tolist(), index=df.index)
     imp_cols = [f'imp_{i}' for i in range(25)]
-    for c in imp_cols:
-        df[c] = df[c].map(mapping)
+    for col in imp_cols:
+        df[col] = df[col].map(mapping)
 
 
 def train(train_inputs, params, add_cv_encoding=False, retrain=False):

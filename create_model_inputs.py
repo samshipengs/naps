@@ -39,10 +39,10 @@ def create_action_type_mapping(recompute=False):
 
         # hardcode
         actions = ['search for poi', 'interaction item image', 'clickout item',
-                     'interaction item info', 'interaction item deals',
-                     'search for destination', 'filter selection',
-                     'interaction item rating', 'search for item',
-                     'change of sort order']
+                   'interaction item info', 'interaction item deals',
+                   'search for destination', 'filter selection',
+                   'interaction item rating', 'search for item',
+                   'change of sort order']
         action_type2natural = {v: k for k, v in enumerate(actions)}
         n_unique_actions = len(actions)
         np.save(filename, action_type2natural)
@@ -113,6 +113,17 @@ def last_reference_id(grp, mode):
         return grp[mask]['action_type'].iloc[last_ref_loc], grp[mask]['reference'].iloc[last_ref_loc]
 
 
+def previous_clickouts(grp):
+    nimps = grp.iloc[-1]['nimps']
+    if len(grp) == 1:
+        return [0.]*nimps
+    else:
+        prev_grp = grp.iloc[:-1]
+        prev_grp_clickouts = prev_grp[prev_grp['action_type'] == 2]['reference'].unique()
+        last_imps = grp.iloc[-1]['impressions'].split('|')
+        return [1. if imp in prev_grp_clickouts else 0. for imp in last_imps]
+
+
 def compute_session_fts(df, mode):
     # last_rid = partial(last_reference_id, mode=mode)
     aggs = {'timestamp': [session_duration, dwell_time_prior_clickout],
@@ -124,14 +135,24 @@ def compute_session_fts(df, mode):
     session_fts.columns = ['_'.join(col).strip() for col in session_fts.columns.values]
     logger.info(f'Session features generated: {list(session_fts.columns)}')
     session_fts.reset_index(inplace=True)
+    df = pd.merge(df, session_fts, on='session_id')
 
     # add last_reference_id and its action_type
+    logger.info('Add last_reference_id and its action_type')
     last_rid = partial(last_reference_id, mode=mode)
     session_grp = df[['session_id', 'action_type', 'reference']].groupby('session_id')
     action_id_pair = session_grp.apply(last_rid).reset_index(name='action_id_pair')
-
     df = pd.merge(df, action_id_pair, on='session_id', how='left')
-    return pd.merge(df, session_fts, on='session_id')
+
+    # add previous click-out info
+    logger.info('Add previous click-out info')
+    df['nimps'] = df['impressions'].str.split('|').str.len()
+    session_grp = df[['session_id', 'action_type', 'reference', 'impressions', 'nimps']].groupby('session_id')
+    prev_cos = session_grp.apply(previous_clickouts).reset_index(name='prev_cos')
+    df = pd.merge(df, prev_cos, on='session_id', how='left')
+    df.drop('nimps', axis=1, inplace=True)
+
+    return df
 
 
 def click_view_encoding(sids, fold, m=5, nrows=None, recompute=False):
@@ -270,6 +291,14 @@ def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=Fal
         logger.info('Pad 0s for impressions length shorter than 25')
         df.loc[padding_mask, 'impressions'] = (df.loc[padding_mask, 'impressions']
                                                  .apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant')))
+
+        # pad the prev_cos
+        logger.info('Pad previous click-out one-hot indicator')
+        df.loc[padding_mask, 'prev_cos'] = (df.loc[padding_mask, 'prev_cos']
+                                              .apply(lambda x: np.pad(x, (0, 25 - len(x)), mode='constant',
+                                                                      constant_values=np.nan)))
+        df[[f'prev_cos_{i}' for i in range(25)]] = pd.DataFrame(df['prev_cos'].values.tolist(), index=df.index)
+        df.drop(['prev_cos'], axis=1, inplace=True)
 
         if mode == 'train':
             logger.info('Assign target')

@@ -2,7 +2,8 @@ import os
 import time
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import StratifiedKFold
+from datetime import datetime as dt
+from sklearn.model_selection import StratifiedShuffleSplit
 import catboost as cat
 
 from create_model_inputs import create_model_inputs
@@ -14,13 +15,6 @@ logger = get_logger('train_model')
 Filepath = get_data_path()
 
 
-def cv_encode(df, mapping):
-    # df[imp_cols] = pd.DataFrame(df['impressions'].values.tolist(), index=df.index)
-    imp_cols = [f'imp_{i}' for i in range(25)]
-    for col in imp_cols:
-        df[col] = df[col].map(mapping)
-
-
 def train(train_inputs, params, retrain=False):
     cache_path = Filepath.cache_path
     model_path = Filepath.model_path
@@ -28,59 +22,51 @@ def train(train_inputs, params, retrain=False):
     targets = train_inputs['target']
     train_inputs.drop('target', axis=1, inplace=True)
 
-    skf = StratifiedKFold(n_splits=6)
+    sss = StratifiedShuffleSplit(n_splits=5, test_size=0.15, random_state=42)
+
     clfs = []
     t_init = time.time()
-    for fold, (trn_ind, val_ind) in enumerate(skf.split(targets, targets)):
+    for fold, (trn_ind, val_ind) in enumerate(sss.split(targets, targets)):
         logger.info(f'Training fold {fold}: train len={len(trn_ind):,} | val len={len(val_ind):,}')
+        # get trn and val data
         x_trn, x_val = train_inputs.iloc[trn_ind].reset_index(drop=True), train_inputs.iloc[val_ind].reset_index(drop=True)
         y_trn, y_val = targets.iloc[trn_ind], targets.iloc[val_ind]
         
-        # =====================================================================================
         # create model
         model_filename = os.path.join(model_path, f'cv{fold}.model')
         if os.path.isfile(model_filename) and not retrain:
             logger.info(f'Loading model from existing {model_filename}')
-            # model = load_model(model_filename)
             clf = cat.CatBoostClassifier()  # parameters not required.
             clf.load_model(model_filename)
         else:
             # train model
             clf = cat.CatBoostClassifier(**params)
-            # specify categorical index
-            categorical_ind = [k for k, v in enumerate(x_trn.columns) if v == 'at']
-            x_trn['at'] = x_trn['at'].fillna(-1)
-            x_val['at'] = x_val['at'].fillna(-1)
-            logger.debug(f'categorical index:{categorical_ind}')
             clf.fit(x_trn, y_trn,
-                    cat_features=categorical_ind,
                     eval_set=(x_val, y_val),
                     early_stopping_rounds=100,
                     verbose=100,
                     plot=False)
-            trn_imp = clf.get_feature_importance(data=cat.Pool(data=x_trn, label=y_trn),#, cat_features=),
+            trn_imp = clf.get_feature_importance(data=cat.Pool(data=x_trn, label=y_trn),
                                                  prettified=True,
                                                  type='FeatureImportance')
-
-            # plot_imp_cat(trn_imp, 'train')
             if trn_imp:
                 plot_imp_cat(trn_imp, fold)
 
             clf.save_model(model_filename)
 
-        # make prediction
+        # make prediction on trn
         trn_pred = clf.predict_proba(x_trn)
         trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.values.reshape(-1, 1))[1]
         plot_hist(trn_pred_label, y_trn, 'train')
         confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
         trn_mrr = np.mean(1 / (trn_pred_label + 1))
-
+        # make prediction on val
         val_pred = clf.predict_proba(x_val)
         val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.values.reshape(-1, 1))[1]
         plot_hist(val_pred_label, y_val, 'validation')
         confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
         val_mrr = np.mean(1 / (val_pred_label + 1))
-        logger.info(f'train mrr: {trn_mrr:.2f} | val mrr: {val_mrr:.2f}')
+        logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')
 
         clfs.append(clf)
 
@@ -151,6 +137,7 @@ if __name__ == '__main__':
     del test_sub['item_recommendations']
     test_sub.rename(columns={'recommendations': 'item_recommendations'}, inplace=True)
     test_sub = test_sub[sub_columns]
-    test_sub.to_csv(os.path.join(Filepath.sub_path, f'sub.csv'), index=False)
+    current_time = dt.now().strftime('%m-%d')
+    test_sub.to_csv(os.path.join(Filepath.sub_path, f'sub_{current_time}.csv'), index=False)
     logger.info('Done all')
 

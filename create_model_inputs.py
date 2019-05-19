@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import datetime
 import os
+import multiprocessing as mp
 from functools import partial
 from utils import load_data, get_logger, get_data_path
 from clean_session import preprocess_sessions
@@ -64,60 +65,10 @@ def prepare_data(mode, nrows=None, recompute=True):
     return df
 
 
-## create some session features
-# def session_duration(ts):
-#     if len(ts) == 1:
-#         return np.nan
-#     else:
-#         return (ts.max() - ts.min()).total_seconds()
-# create some session features
-
-def session_duration(ts):
-    if len(ts) == 1:
-        return np.nan
-    else:
-        return (ts.max() - ts.min()).total_seconds()
-
-def dwell_time_prior_clickout(ts):
-    if len(ts) == 1:
-        return np.nan
-    else:
-        ts_sorted = ts.sort_values()
-        return (ts_sorted.iloc[-1] - ts_sorted.iloc[-2]).total_seconds()
-
-
-def last_reference_id(grp, mode):
-    mask = grp['reference'].notna()
-    if mode == 'train':
-        n = 1
-        last_ref_loc = -2
-    elif mode == 'test':
-        n = 0
-        last_ref_loc = -1
-    else:
-        raise ValueError(f'Invalid mode: {mode}')
-    if mask.sum() <= n:
-        return np.nan
-    else:
-        # the second last reference id i.e. the one before click out and the associated action_type
-        return grp[mask]['action_type'].iloc[last_ref_loc], grp[mask]['reference'].iloc[last_ref_loc]
-
-
-def previous_clickouts(grp):
-    nimps = grp.iloc[-1]['nimps']
-    if len(grp) == 1:
-        return [0.]*int(nimps)
-    else:
-        prev_grp = grp.iloc[:-1]
-        prev_grp_clickouts = prev_grp[prev_grp['action_type'] == 'clickout item']['reference'].unique()
-        last_imps = grp.iloc[-1]['impressions'].split('|')
-        return [1. if imp in prev_grp_clickouts else 0. for imp in last_imps]
-
-
-def compute_session_fts(grp):
+def compute_session_func(grp):
     df = grp.copy()
     # number of records in session
-    df['session_size'] = list(range(len(df)))
+    df['session_size'] = list(range(1, len(df)+1))
 
     # session_time duration (subtract the min)
     t_init = df['timestamp'].min()
@@ -125,85 +76,99 @@ def compute_session_fts(grp):
 
     # get successive time difference
     df['last_duration'] = df['timestamp'].diff().dt.total_seconds()
+    df['last_duration'] = df['last_duration'].fillna(0)
+    df.drop('timestamp', axis=1, inplace=True)
 
-    # number of current_filters
-    # this should be processed before groupby
+    # last reference id in current impression location and its action_type
+    df[['ref_shift', 'at_shift']] = df[['reference', 'action_type']].shift(1)
 
-    #
+    # previous click-outs
+    # now we only need to select rows with action_type that is clickout item
+    df = df[df['action_type'] == 'clickout item'].reset_index(drop=True)
+    df.drop('action_type', axis=1, inplace=True)
 
+    impressions = df['impressions'].dropna().values
+    unique_items = list(set([j for i in impressions for j in i] + list(df['reference'].unique())))
 
+    mapping = {v: k for k, v in enumerate(unique_items)}
+    df['reference_natural'] = df['reference'].map(mapping)
+    prev_cols = [f'prev_{i}' for i in range(len(unique_items))]
+    reference_df = pd.DataFrame(np.eye(len(unique_items), dtype=int)[df['reference_natural'].values],
+                                columns=prev_cols,
+                                index=df.index)
+    df.drop('reference_natural', axis=1, inplace=True)
+    df = pd.concat([df, reference_df], axis=1)
+    df[prev_cols] = df[prev_cols].cumsum().shift(1)
+    df[prev_cols] = df[prev_cols].fillna(0)
 
-def compute_session_fts(df, mode, add_prev_cos=False, recompute=False):
-    filename = os.path.join(Filepath.cache_path, f'{mode}_session_fts.snappy')
-    if os.path.isfile(filename) and not recompute:
-        # so far this should not be used as in prev_cos has list
-        df = pd.read_parquet(filename)
-    else:
-        # last_rid = partial(last_reference_id, mode=mode)
-        aggs = {'timestamp': [session_duration, dwell_time_prior_clickout],
-                # 'current_filters': [last_filters],
-                'session_id': 'size'}
+    def match(row):
+        impressions_natural = [mapping[imp] for imp in row['impressions']]
+        return row[prev_cols].values[impressions_natural]
+    df['prev_clickouts'] = df.apply(match, axis=1)
+    # remove the prev ohe
+    df.drop(prev_cols, axis=1, inplace=True)
 
-        session_grp = df[['session_id', 'timestamp']].groupby('session_id')
-        session_fts = session_grp.agg(aggs)
-        session_fts.columns = ['_'.join(col).strip() for col in session_fts.columns.values]
-        logger.info(f'Session features generated: {list(session_fts.columns)}')
-        session_fts.reset_index(inplace=True)
-        df = pd.merge(df, session_fts, on='session_id')
+    # come back to finding last reference relative location
+    def find_relative_loc(row):
+        ref_shift = row['ref_shift']
+        row_impressions = list(row['impressions'])
+        if ref_shift in row_impressions:
+            return row_impressions.index(ref_shift)+1
+        else:
+            return np.nan
 
-        # add last_reference_id and its action_type
-        logger.info('Add last_reference_id and its action_type')
-        last_rid = partial(last_reference_id, mode=mode)
-        session_grp = df[['session_id', 'action_type', 'reference']].groupby('session_id')
-        action_id_pair = session_grp.apply(last_rid).reset_index(name='action_id_pair')
-        df = pd.merge(df, action_id_pair, on='session_id', how='left')
-
-        if add_prev_cos:
-            # add previous czlick-out info
-            logger.info('Add previous click-out info')
-            df['nimps'] = df['impressions'].str.split('|').str.len()
-            session_grp = df[['session_id', 'action_type', 'reference', 'impressions', 'nimps']].groupby('session_id')
-            prev_cos = session_grp.apply(previous_clickouts).reset_index(name='prev_cos')
-            prev_cos.to_csv('test_prev_cos.csv', index=False)
-            df = pd.merge(df, prev_cos, on='session_id', how='left')
-            df.drop('nimps', axis=1, inplace=True)
+    df['ref_shift'] = df.apply(find_relative_loc, axis=1)
     return df
 
-# def compute_session_fts(df, mode, add_prev_cos=False, recompute=False):
-#     filename = os.path.join(Filepath.cache_path, f'{mode}_session_fts.snappy')
-#     if os.path.isfile(filename) and not recompute:
-#         # so far this should not be used as in prev_cos has list
-#         df = pd.read_parquet(filename)
-#     else:
-#         # last_rid = partial(last_reference_id, mode=mode)
-#         aggs = {'timestamp': [session_duration, dwell_time_prior_clickout],
-#                 # 'current_filters': [last_filters],
-#                 'session_id': 'size'}
-#
-#         session_grp = df[['session_id', 'timestamp']].groupby('session_id')
-#         session_fts = session_grp.agg(aggs)
-#         session_fts.columns = ['_'.join(col).strip() for col in session_fts.columns.values]
-#         logger.info(f'Session features generated: {list(session_fts.columns)}')
-#         session_fts.reset_index(inplace=True)
-#         df = pd.merge(df, session_fts, on='session_id')
-#
-#         # add last_reference_id and its action_type
-#         logger.info('Add last_reference_id and its action_type')
-#         last_rid = partial(last_reference_id, mode=mode)
-#         session_grp = df[['session_id', 'action_type', 'reference']].groupby('session_id')
-#         action_id_pair = session_grp.apply(last_rid).reset_index(name='action_id_pair')
-#         df = pd.merge(df, action_id_pair, on='session_id', how='left')
-#
-#         if add_prev_cos:
-#             # add previous czlick-out info
-#             logger.info('Add previous click-out info')
-#             df['nimps'] = df['impressions'].str.split('|').str.len()
-#             session_grp = df[['session_id', 'action_type', 'reference', 'impressions', 'nimps']].groupby('session_id')
-#             prev_cos = session_grp.apply(previous_clickouts).reset_index(name='prev_cos')
-#             prev_cos.to_csv('test_prev_cos.csv', index=False)
-#             df = pd.merge(df, prev_cos, on='session_id', how='left')
-#             df.drop('nimps', axis=1, inplace=True)
-#     return df
+
+def compute_session(args):
+    # grab the args
+    gids, df = args
+    # selecting the assigned session ids and grouping on session level
+    grps = (df[df['session_id'].isin(gids)]
+            .reset_index(drop=True)
+            .groupby('session_id'))
+
+    # use apply to compute session level features
+    features = grps.apply(compute_session_func).reset_index(drop=True)
+    return features
+
+
+def compute_session_fts(df, mode=None, nprocs=None):
+    # some processing before entering groupby
+    df['impressions'] = df['impressions'].str.split('|')
+    df['n_imps'] = df['impressions'].str.len()
+    # number of current filters
+    df['n_cf'] = df['current_filters'].str.split('|').str.len()
+    df['n_cf'] = df['n_cf'].fillna(0)
+    df.drop('current_filters', axis=1, inplace=True)
+
+    # grps = df.groupby('session_id')
+    # fts = grps.apply(compute_session_func).reset_index(drop=True)
+    # fts.to_parquet(os.path.join(Filepath.cache_path, f'{mode}_session_fts.snappy'))
+    t1 = time.time()
+    if nprocs is None:
+        nprocs = mp.cpu_count() - 1
+        # nprocs = 11
+        logger.info('Using {} cores'.format(nprocs))
+
+    sids = df['session_id'].unique()
+
+    fts = []
+
+    # create iterator to pass in args
+    def args_gen():
+        for i in range(nprocs):
+            yield (sids[range(i, len(sids), nprocs)], df)
+    # init multiprocessing pool
+    pool = mp.Pool(nprocs)
+    for ft in pool.map(compute_session, args_gen()):
+        fts.append(ft)
+    pool.close()
+    pool.join()
+    fts_df = pd.concat(fts, axis=0)
+    fts_df.to_parquet(os.path.join(Filepath.cache_path, f'{mode}_session_fts.snappy'))
+    return fts_df
 
 
 def save_cache(arr, name):
@@ -213,7 +178,8 @@ def save_cache(arr, name):
 
 def create_model_inputs(mode, nrows=100000, recompute=False):
     nrows_ = nrows if nrows is not None else 15932993
-    logger.info(f"\n{'='*10}\nCreating {mode.upper()} model inputs with {nrows_:,} rows and recompute={recompute}\n{'='*10}")
+    logger.info(f"\n{'='*20}\nCreating {mode.upper()} model inputs with {nrows_:,} rows"
+                f" and recompute={recompute}\n{'='*20}")
     filename = os.path.join(Filepath.cache_path, f'{mode}_inputs.snappy')
 
     if os.path.isfile(filename) and not recompute:
@@ -225,28 +191,21 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         df = prepare_data(mode, nrows=nrows, recompute=True)
         logger.info('Compute session features')
         df = compute_session_fts(df, mode)
-
-        logger.info('Only select last click-out from each session')
-        df = df.groupby('session_id').last().reset_index()
-        flogger(df, 'df shape after only selecting last click-out row each session')
+        flogger(df, 'df shape after compute fts')
 
         # log-transform on session_size feature
         logger.info('Log-transform on session_size feature')
-        df['session_id_size'] = np.log(df['session_id_size'])
+        df['session_size'] = np.log(df['session_size'])
 
         # log1p-transform on timestamp_dwell_time_prior_clickout but will cliping upper to 1hr
         logger.info('Also log-transform on timestamp_dwell_time_prior_clickout but will cliping upper to 1hr')
-        df['timestamp_dwell_time_prior_clickout'] = np.log1p(df['timestamp_dwell_time_prior_clickout'].clip(upper=60 ** 2))
+        df['last_duration'] = np.log1p(df['last_duration'].clip(upper=60 ** 2))
 
         if mode == 'test':
             # for testing submission, keep records of the sessions_ids and impressions (still a str)
             test_sub = df[['session_id', 'impressions']]
             test_sub.to_csv(os.path.join(Filepath.sub_path, 'test_sub.csv'), index=False)
             del test_sub
-
-        # number of current filters
-        df['nf'] = df['current_filters'].str.split('|').str.len()
-        df.drop('current_filters', axis=1, inplace=True)
 
         logger.info('Split prices str to list and convert to int')
         df['prices'] = df['prices'].str.split('|')
@@ -272,10 +231,8 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         df[[f'price_{i}' for i in range(25)]] = pd.DataFrame(df['prices_percentage'].values.tolist(), index=df.index)
         df.drop(['prices', 'prices_percentage'], axis=1, inplace=True)
 
-        logger.info('Split impression str to list of impressions')
-        df['impressions'] = df['impressions'].str.split('|')
-        df['n_imps'] = df['impressions'].str.len()
-        logger.info('Convert impression str to int')
+        # convert impressions and reference to int
+        df['reference'] = df['reference'].astype(int)
         df['impressions'] = df['impressions'].apply(lambda x: [int(i) for i in x])
         logger.info('Pad 0s for impressions length shorter than 25')
         df.loc[padding_mask, 'impressions'] = (df.loc[padding_mask, 'impressions']
@@ -283,12 +240,12 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
 
         # pad the prev_cos
         logger.info('Pad previous click-out one-hot indicator')
-        # print(f'!!!!!!!!!!!\n{df.prev_cos.head()}\n{df[df.prev_cos.isna()].head()}')
-        df.loc[padding_mask, 'prev_cos'] = (df.loc[padding_mask, 'prev_cos']
-                                              .apply(lambda x: np.pad(x, (0, 25 - len(x)), mode='constant',
-                                                                      constant_values=np.nan)))
-        df[[f'prev_cos_{i}' for i in range(25)]] = pd.DataFrame(df['prev_cos'].values.tolist(), index=df.index)
-        df.drop(['prev_cos'], axis=1, inplace=True)
+        df.loc[padding_mask, 'prev_clickouts'] = (df.loc[padding_mask, 'prev_clickouts']
+                                                  .apply(lambda x: np.pad(x, (0, 25 - len(x)), mode='constant',
+                                                                          constant_values=np.nan)))
+        df[[f'prev_clickouts{i}' for i in range(25)]] = pd.DataFrame(df['prev_clickouts'].values.tolist(),
+                                                                     index=df.index)
+        df.drop(['prev_clickouts'], axis=1, inplace=True)
 
         if mode == 'train':
             logger.info('Assign target')
@@ -312,42 +269,14 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
             df['target'] = df['target'].astype(int)
             logger.info(f"Target distribution: \n{pd.value_counts(df['target']).head()}")
 
-        logger.info('Assign location of previous reference id')
-
-        def assign_last_ref_id(row, divide=True):
-            action_id_pair = row['action_id_pair']
-            if pd.isna(action_id_pair):
-                # return np.zeros(2, dtype=int)
-                return [np.nan]*2
-
-            # although reference_id got converted to int, but the reference_last_reference_id was calculated
-            # when it was still str value, so here we look up the index in str of impressions
-            else:
-                imp = [str(i) for i in row['impressions']]
-                action_type, ref = action_id_pair
-                if ref in imp:
-                    if divide:
-                        pos = (imp.index(ref) + 1) / len(imp)
-                    else:
-                        pos = imp.index(ref) + 1
-                    return [pos, action_type]
-                else:
-                    return [np.nan, action_type]
-
-        logger.info('Divide last_ref_id by 25')
-        assign_last_ref_id_func = partial(assign_last_ref_id, divide=True)
-        df['last_ref_ind'] = df.apply(assign_last_ref_id_func, axis=1)
-        df[['pos', 'at']] = pd.DataFrame(df['last_ref_ind'].values.tolist(), index=df.index)
         # convert at(action_atype to int)
         at_mapping, _ = create_action_type_mapping()
-        df['at'] = df['at'].map(at_mapping)
+        df['at_shift'] = df['at_shift'].map(at_mapping)
 
         logger.debug('Saving session_ids for verification purposes')
         np.save(os.path.join(Filepath.cache_path, f'{mode}_session_ids.npy'), df['session_id'].values)
 
-        drop_cols = ['session_id', 'user_id', 'impressions', 'timestamp', 'action_type',
-                     'reference', 'action_id_pair',
-                     'last_ref_ind']
+        drop_cols = ['session_id', 'user_id', 'impressions', 'reference']
 
         logger.info(f'Drop columns: {drop_cols}')
         df.drop(drop_cols, axis=1, inplace=True)
@@ -360,7 +289,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
 
 if __name__ == '__main__':
     args = {'mode': 'train',
-            'nrows': 1000000,
+            'nrows': 5000000,
             'recompute': True}
     logger.info(f'Creating data input: {args}')
     _ = create_model_inputs(**args)

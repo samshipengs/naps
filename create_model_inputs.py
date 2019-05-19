@@ -114,6 +114,25 @@ def previous_clickouts(grp):
         return [1. if imp in prev_grp_clickouts else 0. for imp in last_imps]
 
 
+def compute_session_fts(grp):
+    df = grp.copy()
+    # number of records in session
+    df['session_size'] = list(range(len(df)))
+
+    # session_time duration (subtract the min)
+    t_init = df['timestamp'].min()
+    df['session_duration'] = (df['timestamp'] - t_init).dt.total_seconds()
+
+    # get successive time difference
+    df['last_duration'] = df['timestamp'].diff().dt.total_seconds()
+
+    # number of current_filters
+    # this should be processed before groupby
+
+    #
+
+
+
 def compute_session_fts(df, mode, add_prev_cos=False, recompute=False):
     filename = os.path.join(Filepath.cache_path, f'{mode}_session_fts.snappy')
     if os.path.isfile(filename) and not recompute:
@@ -247,7 +266,8 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         # over all records
         def normalize(ps):
             p_arr = np.array(ps)
-            return p_arr / (p_arr.max())
+            return p_arr / np.nanmax(p_arr)
+
         df['prices_percentage'] = df['prices'].apply(normalize)
         df[[f'price_{i}' for i in range(25)]] = pd.DataFrame(df['prices_percentage'].values.tolist(), index=df.index)
         df.drop(['prices', 'prices_percentage'], axis=1, inplace=True)

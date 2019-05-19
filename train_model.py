@@ -2,7 +2,8 @@ import os
 import time
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import StratifiedKFold
+from datetime import datetime as dt
+from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 import catboost as cat
 
 from create_model_inputs import create_model_inputs
@@ -27,10 +28,11 @@ def train(train_inputs, params, retrain=False):
     targets = train_inputs['target']
     train_inputs.drop('target', axis=1, inplace=True)
 
-    skf = StratifiedKFold(n_splits=6)
+    # skf = StratifiedKFold(n_splits=6)
+    sss = StratifiedShuffleSplit(n_splits=5, test_size=0.15, random_state=42)
     clfs = []
     t_init = time.time()
-    for fold, (trn_ind, val_ind) in enumerate(skf.split(targets, targets)):
+    for fold, (trn_ind, val_ind) in enumerate(sss.split(targets, targets)):
         logger.info(f'Training fold {fold}: train len={len(trn_ind):,} | val len={len(val_ind):,}')
         x_trn, x_val = train_inputs.iloc[trn_ind].reset_index(drop=True), train_inputs.iloc[val_ind].reset_index(drop=True)
         y_trn, y_val = targets.iloc[trn_ind], targets.iloc[val_ind]
@@ -72,7 +74,7 @@ def train(train_inputs, params, retrain=False):
         plot_hist(val_pred_label, y_val, 'validation')
         confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
         val_mrr = np.mean(1 / (val_pred_label + 1))
-        logger.info(f'train mrr: {trn_mrr:.2f} | val mrr: {val_mrr:.2f}')
+        logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')
 
         clfs.append(clf)
 
@@ -143,6 +145,7 @@ if __name__ == '__main__':
     del test_sub['item_recommendations']
     test_sub.rename(columns={'recommendations': 'item_recommendations'}, inplace=True)
     test_sub = test_sub[sub_columns]
-    test_sub.to_csv(os.path.join(Filepath.sub_path, f'sub.csv'), index=False)
+    current_time = dt.now().strftime('%m-%d')
+    test_sub.to_csv(os.path.join(Filepath.sub_path, f'sub_{current_time}.csv'), index=False)
     logger.info('Done all')
 

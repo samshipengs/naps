@@ -51,14 +51,13 @@ def create_filters_mapping(recompute=False):
         print(tt.columns, '!'*30)
         del train, test
         gc.collect()
-        print(tt.head())
         tt['current_filters'] = tt['current_filters'].str.split('|')
         tt.dropna(subset=['current_filters'], inplace=True)
         cfs = np.concatenate(tt['current_filters'].values)
         cfs_ctn = pd.value_counts(cfs, normalize=True) * 100
         # choose the top 32
         selected_filters = cfs_ctn.index[:32].values
-        logger.info(f'select filters:\n{selected_filters} which covers {cfs_ctn.iloc[31]}% '
+        logger.info(f'select filters:\n{selected_filters} which covers {cfs_ctn.cumsum().iloc[31]}% '
                     'of all not nan current_filters')
 
         filters2natural = {v: k for k, v in enumerate(selected_filters)}
@@ -213,7 +212,7 @@ def save_cache(arr, name):
     np.save(os.path.join(filepath, name), arr)
 
 
-def create_model_inputs(mode, nrows=100000, recompute=False):
+def create_model_inputs(mode, nrows=100000, add_test=False, recompute=False):
     nrows_ = nrows if nrows is not None else 15932993
     logger.info(f"\n{'='*20}\nCreating {mode.upper()} model inputs with {nrows_:,} rows"
                 f" and recompute={recompute}\n{'='*20}")
@@ -225,7 +224,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
     else:
         logger.info(f'Prepare {mode} data')
         t_init = time.time()
-        df = prepare_data(mode, nrows=nrows, recompute=False)
+        df = prepare_data(mode, nrows=nrows, add_test=add_test, recompute=False)
         logger.info('Compute session features')
         df = compute_session_fts(df, mode)
         flogger(df, 'df shape after compute fts')
@@ -298,7 +297,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         df[[f'price_{i}' for i in range(25)]] = pd.DataFrame(df['prices_percentage'].values.tolist(), index=df.index)
         df.drop(['prices', 'prices_percentage'], axis=1, inplace=True)
 
-        # convert impressions and reference to int
+        # convert impressions to int
         df['impressions'] = df['impressions'].apply(lambda x: [int(i) for i in x])
         logger.info('Pad 0s for impressions length shorter than 25')
         df.loc[padding_mask, 'impressions'] = (df.loc[padding_mask, 'impressions']
@@ -312,7 +311,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         df[[f'prev_clickouts{i}' for i in range(25)]] = pd.DataFrame(df['prev_clickouts'].values.tolist(),
                                                                      index=df.index)
         df.drop(['prev_clickouts'], axis=1, inplace=True)
-
+        logger.info(df.reference.value_counts())
         if mode == 'train':
             logger.info('Assign target')
             logger.info('Convert reference id to int')

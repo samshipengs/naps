@@ -26,85 +26,86 @@ def create_action_type_mapping(recompute=False):
         action_type2natural = np.load(filename).item()
         n_unique_actions = len(action_type2natural)
     else:
-        # train = load_data('train', nrows=None, usecols=['action_type'])
-        # test = load_data('test', nrows=None, usecols=['action_type'])
-        # train = train[train['action_type'].notna()]
-        # test = test[test['action_type'].notna()]
-        # df = pd.concat([train, test], axis=0, ignore_index=True)
-        # del train, test
-        # gc.collect()
-        # actions = df['action_type'].unique()
-        # del df
-        # gc.collect()
-
         # hardcode
         actions = ['search for poi', 'interaction item image', 'clickout item',
-                     'interaction item info', 'interaction item deals',
-                     'search for destination', 'filter selection',
-                     'interaction item rating', 'search for item',
-                     'change of sort order']
+                   'interaction item info', 'interaction item deals',
+                   'search for destination', 'filter selection',
+                   'interaction item rating', 'search for item',
+                   'change of sort order']
         action_type2natural = {v: k for k, v in enumerate(actions)}
         n_unique_actions = len(actions)
         np.save(filename, action_type2natural)
     return action_type2natural, n_unique_actions
 
 
-def prepare_data(mode, convert_action_type=True, nrows=None, recompute=True):
-    # first load data
-    if mode == 'train':
-        df = load_data(mode, nrows=nrows)
-    else:
-        df = load_data(mode)
-    flogger(df, f'raw {mode}')
-    # preprocess data i.e. dropping duplicates, only take sessions with clicks and clip to last click out
-    df = preprocess_sessions(df, mode=mode, drop_duplicates=True, save=True, recompute=recompute)
-    if mode == 'test':
-        # then load the test that we need to submit
-        test_sub = load_data('submission_popular')
-        sub_sids = test_sub['session_id'].unique()
-        df = df[df['session_id'].isin(sub_sids)].reset_index(drop=True)
-        flogger(df, 'Load test with only what ids needed for submissions')
+def prepare_data(mode, nrows=None, add_test=True, recompute=False):
+    nrows_str = 'all' if nrows is None else nrows
+    add_test_str = 'with_test' if add_test else 'no_test'
+    filename = os.path.join(Filepath.cache_path, f'{mode}_{nrows_str}_{add_test_str}.snappy')
 
-    # get time and select columns that get used
-    df['timestamp'] = df['timestamp'].apply(lambda ts: datetime.datetime.utcfromtimestamp(ts))
-    usecols = ['user_id', 'session_id', 'timestamp', 'step', 'action_type', 'current_filters',
-               'reference', 'impressions', 'prices']
-    df = df[usecols]
-    if convert_action_type:
-        logger.info('Converting action_types to int (natural number)')
-        action_type2natural, _ = create_action_type_mapping(recompute=False)
-        df['action_type'] = df['action_type'].map(action_type2natural)
-    logger.info('Sort df by user_id, session_id, timestamp, step')
-    df = df.sort_values(by=['user_id', 'session_id', 'timestamp', 'step']).reset_index(drop=True)
-    flogger(df, f'Prepared {mode} data')
+    if os.path.isfile(filename) and not recompute:
+        logger.info(f'Load from existing {filename}')
+        df = pd.read_parquet(filename)
+    else:
+        # first load data
+        if mode == 'train':
+            df = load_data(mode, nrows=nrows)
+            if add_test:
+                logger.info('Add available test data')
+                df_test = load_data('test', nrows=nrows)
+                df = pd.concat([df, df_test], axis=0, ignore_index=True)
+        else:
+            df = load_data(mode)
+        flogger(df, f'raw {mode}')
+        # preprocess data i.e. dropping duplicates, only take sessions with clicks and clip to last click out
+        df = preprocess_sessions(df, mode=mode, drop_duplicates=True, save=True, recompute=recompute)
+        if mode == 'test':
+            # then load the test that we need to submit
+            test_sub = load_data('submission_popular')
+            sub_sids = test_sub['session_id'].unique()
+            df = df[df['session_id'].isin(sub_sids)].reset_index(drop=True)
+            flogger(df, 'Load test with only what ids needed for submissions')
+
+        # get time and select columns that get used
+        df['timestamp'] = df['timestamp'].apply(lambda ts: datetime.datetime.utcfromtimestamp(ts))
+        usecols = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters',
+                   'reference', 'impressions', 'prices']
+        df = df[usecols]
+        logger.info('Sort df by session_id, timestamp, step')
+        df = df.sort_values(by=['session_id', 'timestamp', 'step']).reset_index(drop=True)
+        flogger(df, f'Prepared {mode} data')
+        df.to_parquet(filename)
     return df
 
 
-def create_cfs_mapping(recompute=False):
-    filepath = Filepath.cache_path
-    filename = os.path.join(filepath, 'filters_mapping.npy')
-
+def create_filters_mapping(recompute=False):
+    filename = os.path.join(Filepath.cache_path, 'filters_mapping.npy')
     if os.path.isfile(filename) and not recompute:
-        logger.info(f'Load cfs mapping from existing: {filename}')
-        cfs2natural = np.load(filename).item()
-        n_unique_filters = len(cfs2natural)
+        logger.info(f'Load filters mapping from existing: {filename}')
+        filters2natural = np.load(filename).item()
     else:
-        train = load_data('train', nrows=None, usecols=['current_filters'])
-        test = load_data('test', nrows=None, usecols=['current_filters'])
-        train = train[train['current_filters'].notna()]
-        test = test[test['current_filters'].notna()]
-        df = pd.concat([train, test], axis=0, ignore_index=True)
+        train = load_data('train', usecols=['current_filters'])
+        test = load_data('test', usecols=['current_filters'])
+        tt = pd.concat([train, test], axis=0, ignore_index=True)
+        print(tt.columns, '!' * 30)
         del train, test
         gc.collect()
+        tt['current_filters'] = tt['current_filters'].str.split('|')
+        tt.dropna(subset=['current_filters'], inplace=True)
+        cfs = np.concatenate(tt['current_filters'].values)
+        cfs_ctn = pd.value_counts(cfs, normalize=True) * 100
+        # choose the top 32
+        selected_filters = cfs_ctn.index[:32].values
+        rest_filters = cfs_ctn.index[32:].values
+        logger.info(f'select filters:\n{selected_filters} which covers {cfs_ctn.cumsum().iloc[31]}% '
+                    'of all not nan current_filters')
 
-        df['current_filters'] = df['current_filters'].str.lower().str.split('|')
-        # get unique cfs
-        unique_cfs = list(set(np.concatenate(df['current_filters'].values)))
-        cfs2natural = {v: k for k, v in enumerate(unique_cfs)}
-        logger.info('Saving filter mappings')
-        np.save(filename, cfs2natural)
-        n_unique_filters = len(unique_cfs)
-    return cfs2natural, n_unique_filters
+        filters2natural = {v: k for k, v in enumerate(selected_filters)}
+        # fit the rest to one mapping
+        for f in rest_filters:
+            filters2natural[f] = len(selected_filters)
+        np.save(filename, filters2natural)
+    return filters2natural
 
 
 # create some session features
@@ -223,7 +224,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
     else:
         logger.info(f'Prepare {mode} data')
         t_init = time.time()
-        df = prepare_data(mode, convert_action_type=True, nrows=nrows, recompute=True)
+        df = prepare_data(mode, nrows=nrows, recompute=True)
         logger.info('Compute session features')
         df = compute_session_fts(df, mode)
 
@@ -333,7 +334,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
                         pos = (imp.index(ref) + 1) / len(imp)
                     else:
                         pos = imp.index(ref) + 1
-                    if action_type == 2:
+                    if action_type == 'clickout item':
                         return [pos, 1]
                     else:
                         return [pos, 0]

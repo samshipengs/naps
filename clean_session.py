@@ -24,7 +24,7 @@ def remove_duplicates(df):
 
 # 1) Cliping sessions up to last clickout (if there is clickout)
 def clip_last_click(grp):
-    check = grp.action_type.values == 'clickout item'
+    check = (grp['action_type'].values == 'clickout item') & (pd.notna(grp['reference'].values))
     if check.sum() != 0:
         return grp.iloc[:np.argwhere(check)[-1][0]+1]
     else:
@@ -61,10 +61,13 @@ def preprocess_sessions(df, mode, drop_duplicates=True, save=True, recompute=Fal
             df = remove_duplicates(df)
         logger.info('Cliping session dataframe up to last click out (if there is clickout)')
         df = df.groupby('session_id').apply(clip_last_click).reset_index(drop=True)
+        logger.info(f'There are rares cases the reference is nan, shape: {df.shape}')
+        # there are rares cases (seen in test set e.g. session_id=cbe3752713eee) the reference is nan
+        df = df[(df['reference'].notna()) | (df['action_type'] != 'clickout item')].reset_index(drop=True)
 
+        logger.info(f'After removing nan reference rows, shape: {df.shape}')
         logger.info('Filtering out sessions without clickouts, reference, or clickout is nan')
-        logger.info(f'{mode} length before filtering no click-out, or nan reference and '
-                    f'click-out sessions: {len(df):,}')
+        logger.info(f'{mode} length before filtering: {len(df):,}')
         filter_func = partial(filter_clickout, mode=mode)
         valid_clicked = df.groupby('session_id').apply(filter_func)
         click_session_ids = valid_clicked[valid_clicked].index

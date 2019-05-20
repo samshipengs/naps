@@ -24,7 +24,7 @@ def remove_duplicates(df):
 
 # 1) Cliping sessions up to last clickout (if there is clickout)
 def clip_last_click(grp):
-    check = grp.action_type.values == 'clickout item'
+    check = (grp['action_type'].values == 'clickout item') & (pd.notna(grp['reference'].values))
     if check.sum() != 0:
         return grp.iloc[:np.argwhere(check)[-1][0]+1]
     else:

@@ -38,10 +38,14 @@ def create_action_type_mapping(recompute=False):
     return action_type2natural, n_unique_actions
 
 
-def prepare_data(mode, nrows=None, recompute=True):
+def prepare_data(mode, nrows=None, add_test=True, recompute=True):
     # first load data
     if mode == 'train':
         df = load_data(mode, nrows=nrows)
+        if add_test:
+            logger.info('Add available test data')
+            df_test = load_data('test', nrows=nrows)
+            df = pd.concat([df, df_test], axis=0, ignore_index=True)
     else:
         df = load_data(mode)
     flogger(df, f'raw {mode}')

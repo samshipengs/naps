@@ -76,7 +76,7 @@ def compute_session_func(grp):
 
     # get successive time difference
     df['last_duration'] = df['timestamp'].diff().dt.total_seconds()
-    df['last_duration'] = df['last_duration'].fillna(0)
+    # df['last_duration'] = df['last_duration'].fillna(0) # do not fillna with 0 as it would indicate this is first row
     df.drop('timestamp', axis=1, inplace=True)
 
     # last reference id in current impression location and its action_type
@@ -99,7 +99,7 @@ def compute_session_func(grp):
     df.drop('reference_natural', axis=1, inplace=True)
     df = pd.concat([df, reference_df], axis=1)
     df[prev_cols] = df[prev_cols].cumsum().shift(1)
-    df[prev_cols] = df[prev_cols].fillna(0)
+    # df[prev_cols] = df[prev_cols].fillna(0) # do not fillna as it would indicate it's the first row
 
     def match(row):
         impressions_natural = [mapping[imp] for imp in row['impressions']]
@@ -110,12 +110,15 @@ def compute_session_func(grp):
 
     # come back to finding last reference relative location
     def find_relative_loc(row):
-        ref_shift = row['ref_shift']
-        row_impressions = list(row['impressions'])
-        if ref_shift in row_impressions:
-            return row_impressions.index(ref_shift)+1
-        else:
+        if row['session_size'] == 1:
             return np.nan
+        else:
+            ref_shift = row['ref_shift']
+            row_impressions = list(row['impressions'])
+            if ref_shift in row_impressions:
+                return row_impressions.index(ref_shift)
+            else:
+                return -1
 
     df['ref_shift'] = df.apply(find_relative_loc, axis=1)
     return df
@@ -143,13 +146,9 @@ def compute_session_fts(df, mode=None, nprocs=None):
     df['n_cf'] = df['n_cf'].fillna(0)
     df.drop('current_filters', axis=1, inplace=True)
 
-    # grps = df.groupby('session_id')
-    # fts = grps.apply(compute_session_func).reset_index(drop=True)
-    # fts.to_parquet(os.path.join(Filepath.cache_path, f'{mode}_session_fts.snappy'))
     t1 = time.time()
     if nprocs is None:
         nprocs = mp.cpu_count() - 1
-        # nprocs = 11
         logger.info('Using {} cores'.format(nprocs))
 
     sids = df['session_id'].unique()
@@ -168,6 +167,7 @@ def compute_session_fts(df, mode=None, nprocs=None):
     pool.join()
     fts_df = pd.concat(fts, axis=0)
     fts_df.to_parquet(os.path.join(Filepath.cache_path, f'{mode}_session_fts.snappy'))
+    logger.info(f'Total time taken to generate fts: {(time.time()-t1)/60:.2f}mins')
     return fts_df
 
 
@@ -192,6 +192,10 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         logger.info('Compute session features')
         df = compute_session_fts(df, mode)
         flogger(df, 'df shape after compute fts')
+
+        if mode == 'test':
+            logger.info('Only select last click-out from each session')
+            df = df.groupby('session_id').last().reset_index()
 
         # log-transform on session_size feature
         logger.info('Log-transform on session_size feature')
@@ -219,10 +223,10 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
                                                                                                constant_values=np.nan))
         # logger.info('Log1p-transform prices')
         # df['prices'] = df['prices'].apply(lambda p: np.log1p(p))
+
+        # maybe normalize to percentage within each records
         logger.info('Normalizing price')
 
-        # maybe normalize to percentage within each records, check does each item_id have the same price
-        # over all records
         def normalize(ps):
             p_arr = np.array(ps)
             return p_arr / np.nanmax(p_arr)
@@ -232,7 +236,6 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         df.drop(['prices', 'prices_percentage'], axis=1, inplace=True)
 
         # convert impressions and reference to int
-        df['reference'] = df['reference'].astype(int)
         df['impressions'] = df['impressions'].apply(lambda x: [int(i) for i in x])
         logger.info('Pad 0s for impressions length shorter than 25')
         df.loc[padding_mask, 'impressions'] = (df.loc[padding_mask, 'impressions']

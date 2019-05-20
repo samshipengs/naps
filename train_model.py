@@ -2,6 +2,7 @@ import os
 import time
 import pandas as pd
 import numpy as np
+from ast import literal_eval
 from datetime import datetime as dt
 from sklearn.model_selection import StratifiedShuffleSplit
 import catboost as cat
@@ -43,16 +44,17 @@ def train(train_inputs, params, retrain=False):
             clf = cat.CatBoostClassifier(**params)
             clf.fit(x_trn, y_trn,
                     eval_set=(x_val, y_val),
-                    early_stopping_rounds=100,
-                    verbose=100,
                     plot=False)
-            trn_imp = clf.get_feature_importance(data=cat.Pool(data=x_trn, label=y_trn),
-                                                 prettified=True,
-                                                 type='FeatureImportance')
-            if trn_imp:
-                plot_imp_cat(trn_imp, fold)
-
+            # save trained model
             clf.save_model(model_filename)
+        logger.info('Computing feature importance')
+        # get feature importance
+        trn_imp = clf.get_feature_importance(data=cat.Pool(data=x_trn, label=y_trn),
+                                             prettified=True,
+                                             type='ShapValues')
+                                             # type='FeatureImportance')
+        plot_imp_cat(trn_imp, fold)
+
 
         # make prediction on trn
         trn_pred = clf.predict_proba(x_trn)
@@ -75,18 +77,21 @@ def train(train_inputs, params, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 5000000,
-             'recompute_train': True,
-             'retrain': True,
-             'recompute_test': True}
+    setup = {'nrows': 1000000,
+             'test_nrows': None,
+             'recompute_train': False,
+             'retrain': False,
+             'recompute_test': False}
 
     device = 'GPU' if check_gpu() else 'CPU'
     params = {'loss_function': 'MultiClass',
               'custom_metric': ['MultiClass', 'Accuracy'],
               'eval_metric': 'MultiClass',
-              'iterations': 5000,
+              'iterations': 200,
               'learning_rate': 0.02,
-              'depth': 8,
+              'depth': 6,
+              'early_stopping_rounds': 20,
+              'verbose': 100,
               'task_type': device}
 
     logger.info(f"\nSetup\n{'='*20}\n{setup}\n{'='*20}")
@@ -97,10 +102,13 @@ if __name__ == '__main__':
     # train the model
     models = train(train_inputs, params=params, retrain=setup['retrain'])
     # get the test inputs
-    test_inputs = create_model_inputs(mode='test', nrows=setup['nrows'], recompute=setup['recompute_test'])
+    test_inputs = create_model_inputs(mode='test', nrows=setup['test_nrows'], recompute=setup['recompute_test'])
     # make predictions on test
     logger.info('Load test sub csv')
     test_sub = pd.read_csv(os.path.join(Filepath.sub_path, 'test_sub.csv'))
+    # when impressions was a listed and saved to csv
+    test_sub['impressions'] = test_sub['impressions'].apply(lambda x: literal_eval(x))
+
     sub_popular = pd.read_csv(os.path.join(Filepath.data_path, 'submission_popular.csv'))
     sub_columns = sub_popular.columns
 
@@ -122,8 +130,8 @@ if __name__ == '__main__':
     np.save(os.path.join(Filepath.sub_path, f'test_pred_label.npy'), test_pred_label)
 
     # pad to 25
-    test_sub['impressions'] = test_sub['impressions'].str.split('|')
-    print(test_sub['impressions'].str.len().describe())
+    # test_sub['impressions'] = test_sub['impressions'].str.split('|')
+    # print(test_sub['impressions'].str.len().describe())
     test_sub['impressions'] = test_sub['impressions'].apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant'))
     test_impressions = np.array(list(test_sub['impressions'].values))
 

@@ -56,11 +56,11 @@ def prepare_data(mode, nrows=None, recompute=True):
 
     # get time and select columns that get used
     df['timestamp'] = df['timestamp'].apply(lambda ts: datetime.datetime.utcfromtimestamp(ts))
-    usecols = ['user_id', 'session_id', 'timestamp', 'step', 'action_type', 'current_filters',
+    usecols = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters',
                'reference', 'impressions', 'prices']
     df = df[usecols]
-    logger.info('Sort df by user_id, session_id, timestamp, step')
-    df = df.sort_values(by=['user_id', 'session_id', 'timestamp', 'step']).reset_index(drop=True)
+    logger.info('Sort df by session_id, timestamp, step')
+    df = df.sort_values(by=['session_id', 'timestamp', 'step']).reset_index(drop=True)
     flogger(df, f'Prepared {mode} data')
     return df
 
@@ -279,7 +279,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         logger.debug('Saving session_ids for verification purposes')
         np.save(os.path.join(Filepath.cache_path, f'{mode}_session_ids.npy'), df['session_id'].values)
 
-        drop_cols = ['session_id', 'user_id', 'impressions', 'reference']
+        drop_cols = ['session_id', 'impressions', 'reference']
 
         logger.info(f'Drop columns: {drop_cols}')
         df.drop(drop_cols, axis=1, inplace=True)

@@ -51,8 +51,8 @@ def train(train_inputs, params, retrain=False):
         # get feature importance
         trn_imp = clf.get_feature_importance(data=cat.Pool(data=x_trn, label=y_trn),
                                              prettified=True,
-                                             type='ShapValues')
-                                             # type='FeatureImportance')
+                                             # type='ShapValues')
+                                             type='FeatureImportance')
         plot_imp_cat(trn_imp, fold)
 
 

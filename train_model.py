@@ -77,20 +77,20 @@ def train(train_inputs, params, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 1000000,
+    setup = {'nrows': None,
              'test_nrows': None,
-             'recompute_train': False,
-             'retrain': False,
-             'recompute_test': False}
+             'recompute_train': True,
+             'retrain': True,
+             'recompute_test': True}
 
     device = 'GPU' if check_gpu() else 'CPU'
     params = {'loss_function': 'MultiClass',
               'custom_metric': ['MultiClass', 'Accuracy'],
               'eval_metric': 'MultiClass',
-              'iterations': 200,
+              'iterations': 500,
               'learning_rate': 0.02,
-              'depth': 6,
-              'early_stopping_rounds': 20,
+              'depth': 8,
+              'early_stopping_rounds': 50,
               'verbose': 100,
               'task_type': device}
 

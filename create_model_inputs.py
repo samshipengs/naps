@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import datetime
 import os
+import gc
 import multiprocessing as mp
 from functools import partial
 from utils import load_data, get_logger, get_data_path
@@ -38,34 +39,70 @@ def create_action_type_mapping(recompute=False):
     return action_type2natural, n_unique_actions
 
 
-def prepare_data(mode, nrows=None, add_test=True, recompute=True):
-    # first load data
-    if mode == 'train':
-        df = load_data(mode, nrows=nrows)
-        if add_test:
-            logger.info('Add available test data')
-            df_test = load_data('test', nrows=nrows)
-            df = pd.concat([df, df_test], axis=0, ignore_index=True)
+def create_filters_mapping(recompute=False):
+    filename = os.path.join(Filepath.cache_path, 'filters_mapping.npy')
+    if os.path.isfile(filename) and not recompute:
+        logger.info(f'Load filters mapping from existing: {filename}')
+        filters2natural = np.load(filename).item()
     else:
-        df = load_data(mode)
-    flogger(df, f'raw {mode}')
-    # preprocess data i.e. dropping duplicates, only take sessions with clicks and clip to last click out
-    df = preprocess_sessions(df, mode=mode, drop_duplicates=True, save=True, recompute=recompute)
-    if mode == 'test':
-        # then load the test that we need to submit
-        test_sub = load_data('submission_popular')
-        sub_sids = test_sub['session_id'].unique()
-        df = df[df['session_id'].isin(sub_sids)].reset_index(drop=True)
-        flogger(df, 'Load test with only what ids needed for submissions')
+        train = load_data('train', usecols=['current_filters'])
+        test = load_data('test', usecols=['current_filters'])
+        tt = pd.concat([train, test], axis=0, ignore_index=True)
+        print(tt.columns, '!'*30)
+        del train, test
+        gc.collect()
+        print(tt.head())
+        tt['current_filters'] = tt['current_filters'].str.split('|')
+        tt.dropna(subset=['current_filters'], inplace=True)
+        cfs = np.concatenate(tt['current_filters'].values)
+        cfs_ctn = pd.value_counts(cfs, normalize=True) * 100
+        # choose the top 32
+        selected_filters = cfs_ctn.index[:32].values
+        logger.info(f'select filters:\n{selected_filters} which covers {cfs_ctn.iloc[31]}% '
+                    'of all not nan current_filters')
 
-    # get time and select columns that get used
-    df['timestamp'] = df['timestamp'].apply(lambda ts: datetime.datetime.utcfromtimestamp(ts))
-    usecols = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters',
-               'reference', 'impressions', 'prices']
-    df = df[usecols]
-    logger.info('Sort df by session_id, timestamp, step')
-    df = df.sort_values(by=['session_id', 'timestamp', 'step']).reset_index(drop=True)
-    flogger(df, f'Prepared {mode} data')
+        filters2natural = {v: k for k, v in enumerate(selected_filters)}
+        np.save(filename, filters2natural)
+    return filters2natural
+
+
+def prepare_data(mode, nrows=None, add_test=True, recompute=False):
+    nrows_str = 'all' if nrows is None else nrows
+    add_test_str = 'with_test' if add_test else 'no_test'
+    filename = os.path.join(Filepath.cache_path, f'{mode}_{nrows_str}_{add_test_str}.snappy')
+
+    if os.path.isfile(filename) and not recompute:
+        logger.info(f'Load from existing {filename}')
+        df = pd.read_parquet(filename)
+    else:
+        # first load data
+        if mode == 'train':
+            df = load_data(mode, nrows=nrows)
+            if add_test:
+                logger.info('Add available test data')
+                df_test = load_data('test', nrows=nrows)
+                df = pd.concat([df, df_test], axis=0, ignore_index=True)
+        else:
+            df = load_data(mode)
+        flogger(df, f'raw {mode}')
+        # preprocess data i.e. dropping duplicates, only take sessions with clicks and clip to last click out
+        df = preprocess_sessions(df, mode=mode, drop_duplicates=True, save=True, recompute=recompute)
+        if mode == 'test':
+            # then load the test that we need to submit
+            test_sub = load_data('submission_popular')
+            sub_sids = test_sub['session_id'].unique()
+            df = df[df['session_id'].isin(sub_sids)].reset_index(drop=True)
+            flogger(df, 'Load test with only what ids needed for submissions')
+
+        # get time and select columns that get used
+        df['timestamp'] = df['timestamp'].apply(lambda ts: datetime.datetime.utcfromtimestamp(ts))
+        usecols = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters',
+                   'reference', 'impressions', 'prices']
+        df = df[usecols]
+        logger.info('Sort df by session_id, timestamp, step')
+        df = df.sort_values(by=['session_id', 'timestamp', 'step']).reset_index(drop=True)
+        flogger(df, f'Prepared {mode} data')
+        df.to_parquet(filename)
     return df
 
 
@@ -145,10 +182,6 @@ def compute_session_fts(df, mode=None, nprocs=None):
     # some processing before entering groupby
     df['impressions'] = df['impressions'].str.split('|')
     df['n_imps'] = df['impressions'].str.len()
-    # number of current filters
-    df['n_cf'] = df['current_filters'].str.split('|').str.len()
-    df['n_cf'] = df['n_cf'].fillna(0)
-    df.drop('current_filters', axis=1, inplace=True)
 
     t1 = time.time()
     if nprocs is None:
@@ -192,10 +225,36 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
     else:
         logger.info(f'Prepare {mode} data')
         t_init = time.time()
-        df = prepare_data(mode, nrows=nrows, recompute=True)
+        df = prepare_data(mode, nrows=nrows, recompute=False)
         logger.info('Compute session features')
         df = compute_session_fts(df, mode)
         flogger(df, 'df shape after compute fts')
+
+        logger.info('Add current_filters one-hot representations')
+        df['current_filters'] = df['current_filters'].str.split('|')
+        # df['n_cf'] = df['n_cf'].fillna(0)
+        # df.drop('current_filters', axis=1, inplace=True)
+        filters2natural = create_filters_mapping(recompute=False)
+        n_filters = len(filters2natural)
+        selected_filters = filters2natural.keys()
+
+        # df['current_filters'] = df['current_filters'].apply(lambda cfs: [filters2natural[cf] for cf in cfs])
+
+        def _map_current_filters(cfs):
+            # if pd.isna(cfs):
+            if type(cfs) == float or cfs is None:
+                return np.zeros(n_filters, dtype=int)
+            else:
+                cfs_natural = [filters2natural[cf] for cf in cfs if cf in selected_filters]
+                if len(cfs_natural) == 0:
+                    return np.zeros(n_filters, dtype=int)
+                else:
+                    return np.sum(np.eye(n_filters, dtype=int)[cfs_natural], axis=0)
+
+        df['current_filters'] = df['current_filters'].apply(_map_current_filters)
+        df[[f'cf{i}' for i in range(n_filters)]] = pd.DataFrame(df['current_filters'].values.tolist(),
+                                                                index=df.index)
+        df.drop('current_filters', axis=1, inplace=True)
 
         if mode == 'test':
             logger.info('Only select last click-out from each session')
@@ -296,7 +355,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
 
 if __name__ == '__main__':
     args = {'mode': 'train',
-            'nrows': 5000000,
+            'nrows': 1000000,
             'recompute': True}
     logger.info(f'Creating data input: {args}')
     _ = create_model_inputs(**args)

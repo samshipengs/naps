@@ -14,7 +14,7 @@ def build_model(n_cfs, params, dense_act='relu'):
     tcn_params = params['tcn_params']
     # build model =====================================================================================
     # NUMERICS
-    numerics_input = Input(shape=(4,), name='numerics_input')
+    numerics_input = Input(shape=(6,), name='numerics_input')
     numerics = Dense(8, activation=dense_act)(numerics_input)
 
     # IMPRESSIONS

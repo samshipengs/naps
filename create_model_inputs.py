@@ -17,66 +17,64 @@ def flogger(df, name):
     logger.info(f'{name} shape: ({df.shape[0]:,}, {df.shape[1]})')
 
 
-def create_action_type_mapping(recompute=False):
-    filepath = Filepath.cache_path
-    filename = os.path.join(filepath, 'action_types_mapping.npy')
+# def create_action_type_mapping(recompute=False):
+#     filepath = Filepath.cache_path
+#     filename = os.path.join(filepath, 'action_types_mapping.npy')
+#
+#     if os.path.isfile(filename) and not recompute:
+#         logger.info(f'Load action_types mapping from existing: {filename}')
+#         action_type2natural = np.load(filename).item()
+#         n_unique_actions = len(action_type2natural)
+#     else:
+#         # hardcode
+#         actions = ['search for poi', 'interaction item image', 'clickout item',
+#                      'interaction item info', 'interaction item deals',
+#                      'search for destination', 'filter selection',
+#                      'interaction item rating', 'search for item',
+#                      'change of sort order']
+#         action_type2natural = {v: k for k, v in enumerate(actions)}
+#         n_unique_actions = len(actions)
+#         np.save(filename, action_type2natural)
+#     return action_type2natural, n_unique_actions
+
+
+def prepare_data(mode, nrows=None, add_test=True, recompute=False):
+    nrows_str = 'all' if nrows is None else nrows
+    add_test_str = 'with_test' if add_test else 'no_test'
+    filename = os.path.join(Filepath.cache_path, f'{mode}_{nrows_str}_{add_test_str}.snappy')
 
     if os.path.isfile(filename) and not recompute:
-        logger.info(f'Load action_types mapping from existing: {filename}')
-        action_type2natural = np.load(filename).item()
-        n_unique_actions = len(action_type2natural)
+        logger.info(f'Load from existing {filename}')
+        df = pd.read_parquet(filename)
     else:
-        # train = load_data('train', nrows=None, usecols=['action_type'])
-        # test = load_data('test', nrows=None, usecols=['action_type'])
-        # train = train[train['action_type'].notna()]
-        # test = test[test['action_type'].notna()]
-        # df = pd.concat([train, test], axis=0, ignore_index=True)
-        # del train, test
-        # gc.collect()
-        # actions = df['action_type'].unique()
-        # del df
-        # gc.collect()
+        # first load data
+        if mode == 'train':
+            df = load_data(mode, nrows=nrows)
+            if add_test:
+                logger.info('Add available test data')
+                df_test = load_data('test', nrows=nrows)
+                df = pd.concat([df, df_test], axis=0, ignore_index=True)
+        else:
+            df = load_data(mode)
+        flogger(df, f'raw {mode}')
+        # preprocess data i.e. dropping duplicates, only take sessions with clicks and clip to last click out
+        df = preprocess_sessions(df, mode=mode, drop_duplicates=True, save=True, recompute=recompute)
+        if mode == 'test':
+            # then load the test that we need to submit
+            test_sub = load_data('submission_popular')
+            sub_sids = test_sub['session_id'].unique()
+            df = df[df['session_id'].isin(sub_sids)].reset_index(drop=True)
+            flogger(df, 'Load test with only what ids needed for submissions')
 
-        # hardcode
-        actions = ['search for poi', 'interaction item image', 'clickout item',
-                     'interaction item info', 'interaction item deals',
-                     'search for destination', 'filter selection',
-                     'interaction item rating', 'search for item',
-                     'change of sort order']
-        action_type2natural = {v: k for k, v in enumerate(actions)}
-        n_unique_actions = len(actions)
-        np.save(filename, action_type2natural)
-    return action_type2natural, n_unique_actions
-
-
-def prepare_data(mode, convert_action_type=True, nrows=None, recompute=True):
-    # first load data
-    if mode == 'train':
-        df = load_data(mode, nrows=nrows)
-    else:
-        df = load_data(mode)
-    flogger(df, f'raw {mode}')
-    # preprocess data i.e. dropping duplicates, only take sessions with clicks and clip to last click out
-    df = preprocess_sessions(df, mode=mode, drop_duplicates=True, save=True, recompute=recompute)
-    if mode == 'test':
-        # then load the test that we need to submit
-        test_sub = load_data('submission_popular')
-        sub_sids = test_sub['session_id'].unique()
-        df = df[df['session_id'].isin(sub_sids)].reset_index(drop=True)
-        flogger(df, 'Load test with only what ids needed for submissions')
-
-    # get time and select columns that get used
-    df['timestamp'] = df['timestamp'].apply(lambda ts: datetime.datetime.utcfromtimestamp(ts))
-    usecols = ['user_id', 'session_id', 'timestamp', 'step', 'action_type', 'current_filters',
-               'reference', 'impressions', 'prices']
-    df = df[usecols]
-    if convert_action_type:
-        logger.info('Converting action_types to int (natural number)')
-        action_type2natural, _ = create_action_type_mapping(recompute=False)
-        df['action_type'] = df['action_type'].map(action_type2natural)
-    logger.info('Sort df by user_id, session_id, timestamp, step')
-    df = df.sort_values(by=['user_id', 'session_id', 'timestamp', 'step']).reset_index(drop=True)
-    flogger(df, f'Prepared {mode} data')
+        # get time and select columns that get used
+        df['timestamp'] = df['timestamp'].apply(lambda ts: datetime.datetime.utcfromtimestamp(ts))
+        usecols = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters',
+                   'reference', 'impressions', 'prices']
+        df = df[usecols]
+        logger.info('Sort df by session_id, timestamp, step')
+        df = df.sort_values(by=['session_id', 'timestamp', 'step']).reset_index(drop=True)
+        flogger(df, f'Prepared {mode} data')
+        df.to_parquet(filename)
     return df
 
 
@@ -223,7 +221,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
     else:
         logger.info(f'Prepare {mode} data')
         t_init = time.time()
-        df = prepare_data(mode, convert_action_type=True, nrows=nrows, recompute=True)
+        df = prepare_data(mode, nrows=nrows, add_test=False, recompute=True)
         logger.info('Compute session features')
         df = compute_session_fts(df, mode)
 
@@ -269,6 +267,8 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
 
         logger.info('Split impression str to list of impressions')
         df['impressions'] = df['impressions'].str.split('|')
+        df['n_imps'] = df['impressions'].str.len()
+        df['n_imps'] = df['n_imps']/25
         logger.info('Convert impression str to int')
         df['impressions'] = df['impressions'].apply(lambda x: [int(i) for i in x])
         logger.info('Pad 0s for impressions length shorter than 25')
@@ -299,29 +299,10 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
 
         logger.info('Assign location of previous reference id')
 
-        # def assign_last_ref_id(row, divide=True):
-        #     ref = row['reference_last_reference_id']
-        #     # although reference_id got converted to int, but the reference_last_reference_id was calculated
-        #     # when it was still str value, so here we look up the index in str of impressions
-        #     imp = [str(i) for i in row['impressions']]
-        #
-        #     if pd.isna(ref):
-        #         return np.nan
-        #     else:
-        #         if ref in imp:
-        #             if divide:
-        #                 return (imp.index(ref) + 1) / len(imp)
-        #             else:
-        #                 return imp.index(ref) + 1
-        #         else:
-        #             return np.nan
-        
-        #_, n_unique_actions = create_action_type_mapping()
-
         def assign_last_ref_id(row, divide=True):
             action_id_pair = row['action_id_pair']
             if pd.isna(action_id_pair):
-                return np.zeros(2, dtype=int)
+                return np.zeros(3, dtype=int)
             # ref = row['reference_last_reference_id']
             # although reference_id got converted to int, but the reference_last_reference_id was calculated
             # when it was still str value, so here we look up the index in str of impressions
@@ -333,12 +314,12 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
                         pos = (imp.index(ref) + 1) / len(imp)
                     else:
                         pos = imp.index(ref) + 1
-                    if action_type == 2:
-                        return [pos, 1]
+                    if action_type == 'clickout item':
+                        return [pos, 1, 0]
                     else:
-                        return [pos, 0]
+                        return [pos, 0, 1]
                 else:
-                    return np.zeros(2, dtype=int)
+                    return np.zeros(3, dtype=int)
 
         logger.info('Divide last_ref_id by 25')
         assign_last_ref_id_func = partial(assign_last_ref_id, divide=True)
@@ -409,7 +390,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
 
         logger.info('Getting numerics')
         # numerics
-        num_cols = ['session_id_size', 'timestamp_dwell_time_prior_clickout']
+        num_cols = ['session_id_size', 'timestamp_dwell_time_prior_clickout', 'n_imps']
         logger.info('Filling nans with value=-1')
         for c in num_cols:
             df[c] = df[c].fillna(-1)

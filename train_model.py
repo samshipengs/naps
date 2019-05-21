@@ -55,7 +55,7 @@ def iterate_minibatches(numerics, impressions, prices, cfilters, targets, batch_
             cfilters_batch = cfilters[excerpt]
             targets_batch = targets[excerpt]
 
-            prices_batch = np.array([i.reshape(-1, 1) for i in prices_batch])
+            # prices_batch = np.array([i.reshape(-1, 1) for i in prices_batch])
             # yield ([numerics_batch, impressions_batch, prices_batch,
             #         cfilters_batch], targets_batch)
             yield ([numerics_batch, prices_batch,
@@ -151,13 +151,13 @@ def train(train_inputs, params, retrain=False):
         # val_mrr = np.mean(1 / (val_pred_label + 1))
         # logger.info(f'train mrr: {trn_mrr:.2f} | val mrr: {val_mrr:.2f}')
         # make prediction
-        trn_pred = model.predict(x=[trn_numerics, trn_price[:, :, None], trn_cfilter], batch_size=1024)
+        trn_pred = model.predict(x=[trn_numerics, trn_price, trn_cfilter], batch_size=1024)
         trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
         plot_hist(trn_pred_label, y_trn, 'train')
         confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
         trn_mrr = np.mean(1 / (trn_pred_label + 1))
 
-        val_pred = model.predict(x=[val_numerics, val_price[:, :, None], val_cfilter], batch_size=1024)
+        val_pred = model.predict(x=[val_numerics, val_price, val_cfilter], batch_size=1024)
         val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
         plot_hist(val_pred_label, y_val, 'validation')
         confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)

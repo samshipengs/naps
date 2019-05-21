@@ -160,7 +160,8 @@ def last_reference_id(grp, mode):
         return np.nan
     else:
         # the second last reference id i.e. the one before click out and the associated action_type
-        return grp[mask]['action_type'].iloc[last_ref_loc], grp[mask]['reference'].iloc[last_ref_loc]
+        return grp[mask]['action_type'].iloc[last_ref_loc], \
+               grp[mask]['reference'].iloc[last_ref_loc]
 
 
 # def compute_session_fts(df, mode):
@@ -249,17 +250,28 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         logger.info('Split prices str to list and convert to int')
         df['prices'] = df['prices'].str.split('|')
         df['prices'] = df['prices'].apply(lambda x: [int(p) for p in x])
+
+        def _rank_price(prices):
+            ps = np.array(prices)
+            sort_index = ps.argsort()
+            ranks = np.empty_like(sort_index)
+            n_prices = len(ps)
+            # get the rank (start from 1) percentage
+            ranks[sort_index] = (np.arange(n_prices)+1)/n_prices
+            return ranks
+        df['prices_rank'] = df['prices'].apply(_rank_price)
+
         logger.info('Pad 0s for prices length shorter than 25')
         df['time_steps'] = df['prices'].str.len()
         padding_mask = df['time_steps'] < 25
         df.loc[padding_mask, 'prices'] = df.loc[padding_mask, 'prices'].apply(lambda x: np.pad(x, (0, 25-len(x)),
                                                                                                mode='constant'))
-        # logger.info('Log1p-transform prices')
-        # df['prices'] = df['prices'].apply(lambda p: np.log1p(p))
+        df.loc[padding_mask, 'prices_rank'] = (df
+                                               .loc[padding_mask, 'prices_rank']
+                                               .apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant')))
+
         logger.info('Normalizing price')
 
-        # maybe normalize to percentage within each records, check does each item_id have the same price
-        # over all records
         def normalize(ps):
             p_arr = np.array(ps)
             return p_arr / (p_arr.max())
@@ -374,7 +386,9 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         # PRICES
         prices = np.array(list(df['prices'].values))
         df.drop('prices', axis=1, inplace=True)
-        save_cache(prices, f'{mode}_prices.npy')
+        prices_rank = np.array(list(df['prices_rank'].values))
+        prices_stack = np.concatenate((prices[:, :, None], prices_rank[:, :, None]), axis=-1)
+        save_cache(prices_stack, f'{mode}_prices.npy')
 
         logger.info('Getting impressions')
         # IMPRESSIONS

@@ -29,7 +29,7 @@ def build_model(n_cfs, params, dense_act='relu'):
     cfilter_dense2 = Dropout(0.2)(cfilter_dense1)
 
     # PRICES
-    price_input = Input(shape=(None, 1), name='price_input')
+    price_input = Input(shape=(None, 2), name='price_input')
     tcn_params['name'] = 'price_tcn'
     price_tcn = TCN(**tcn_params)(price_input)
     price_dense = Dense(units=32, activation=dense_act)(price_tcn)

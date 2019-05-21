@@ -4,7 +4,7 @@ import numpy as np
 from datetime import datetime as dt
 
 import pandas as pd
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
 from keras.utils import plot_model
 from keras.models import load_model
@@ -71,11 +71,13 @@ def train(train_inputs, params, retrain=False):
     batch_size = params['batch_size']
     n_epochs = params['n_epochs']
 
-    skf = StratifiedKFold(n_splits=6)
+    # skf = StratifiedKFold(n_splits=6)
+    sss = StratifiedShuffleSplit(n_splits=6, test_size=0.15, random_state=42)
+
     models = []
     report = {}
     t_init = time.time()
-    for fold, (trn_ind, val_ind) in enumerate(skf.split(train_inputs['targets'], train_inputs['targets'])):
+    for fold, (trn_ind, val_ind) in enumerate(sss.split(train_inputs['targets'], train_inputs['targets'])):
         logger.info(f'Training fold {fold}')
         report_fold = {}
         trn_numerics, val_numerics = train_inputs['numerics'][trn_ind], train_inputs['numerics'][val_ind]

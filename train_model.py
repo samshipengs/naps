@@ -35,7 +35,31 @@ class LoggingCallback(Callback):
         self.print_fcn(msg)
 
 
-def iterate_minibatches(numerics, impressions, prices, cfilters, targets, batch_size, shuffle=True):
+# def iterate_minibatches(numerics, impressions, prices, cfilters, targets, batch_size, shuffle=True):
+#     # default we will shuffle
+#     indices = np.arange(len(targets))
+#     while True:
+#         if shuffle:
+#             np.random.shuffle(indices)
+#
+#         remainder = len(targets) % batch_size
+#         for start_idx in range(0, len(targets), batch_size):
+#             if remainder != 0 and start_idx + batch_size >= len(targets):
+#                 excerpt = indices[len(targets) - batch_size:len(targets)]
+#             else:
+#                 excerpt = indices[start_idx:start_idx + batch_size]
+#
+#             numerics_batch = numerics[excerpt]
+#             impressions_batch = impressions[excerpt]
+#             prices_batch = prices[excerpt]
+#             cfilters_batch = cfilters[excerpt]
+#             targets_batch = targets[excerpt]
+#
+#             prices_batch = np.array([i.reshape(-1, 1) for i in prices_batch])
+#             yield ([numerics_batch, impressions_batch, prices_batch,
+#                     cfilters_batch], targets_batch)
+
+def iterate_minibatches(numerics, prices, cfilters, targets, batch_size, shuffle=True):
     # default we will shuffle
     indices = np.arange(len(targets))
     while True:
@@ -50,13 +74,12 @@ def iterate_minibatches(numerics, impressions, prices, cfilters, targets, batch_
                 excerpt = indices[start_idx:start_idx + batch_size]
 
             numerics_batch = numerics[excerpt]
-            impressions_batch = impressions[excerpt]
             prices_batch = prices[excerpt]
             cfilters_batch = cfilters[excerpt]
             targets_batch = targets[excerpt]
 
             prices_batch = np.array([i.reshape(-1, 1) for i in prices_batch])
-            yield ([numerics_batch, impressions_batch, prices_batch,
+            yield ([numerics_batch, prices_batch,
                     cfilters_batch], targets_batch)
 
 
@@ -79,15 +102,18 @@ def train(train_inputs, params, retrain=False):
         logger.info(f'Training fold {fold}')
         report_fold = {}
         trn_numerics, val_numerics = train_inputs['numerics'][trn_ind], train_inputs['numerics'][val_ind]
-        trn_imp, val_imp = train_inputs['impressions'][trn_ind], train_inputs['impressions'][val_ind]
+        # trn_imp, val_imp = train_inputs['impressions'][trn_ind], train_inputs['impressions'][val_ind]
         trn_price, val_price = train_inputs['prices'][trn_ind], train_inputs['prices'][val_ind]
         trn_cfilter, val_cfilter = train_inputs['cfilters'][trn_ind], train_inputs['cfilters'][val_ind]
         y_trn, y_val = train_inputs['targets'][trn_ind], train_inputs['targets'][val_ind]
         report_fold['train_len'] = len(y_trn)
         report_fold['val_len'] = len(y_val)
         # data generator
-        train_gen = iterate_minibatches(trn_numerics, trn_imp, trn_price, trn_cfilter, y_trn, batch_size, shuffle=True)
-        val_gen = iterate_minibatches(val_numerics, val_imp, val_price, val_cfilter, y_val, batch_size, shuffle=False)
+        # train_gen = iterate_minibatches(trn_numerics, trn_imp, trn_price, trn_cfilter, y_trn, batch_size, shuffle=True)
+        # val_gen = iterate_minibatches(val_numerics, val_imp, val_price, val_cfilter, y_val, batch_size, shuffle=False)
+        train_gen = iterate_minibatches(trn_numerics, trn_price, trn_cfilter, y_trn, batch_size, shuffle=True)
+        val_gen = iterate_minibatches(val_numerics, val_price, val_cfilter, y_val, batch_size, shuffle=False)
+
 
         # =====================================================================================
         # create model
@@ -133,14 +159,28 @@ def train(train_inputs, params, retrain=False):
                                           validation_data=val_gen,
                                           validation_steps=len(y_val) // batch_size)
 
+        # # make prediction
+        # trn_pred = model.predict(x=[trn_numerics, trn_imp, trn_price[:, :, None], trn_cfilter], batch_size=1024)
+        # trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
+        # plot_hist(trn_pred_label, y_trn, 'train')
+        # confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
+        # trn_mrr = np.mean(1 / (trn_pred_label + 1))
+        #
+        # val_pred = model.predict(x=[val_numerics, val_imp, val_price[:, :, None], val_cfilter], batch_size=1024)
+        # val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
+        # plot_hist(val_pred_label, y_val, 'validation')
+        # confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
+        # val_mrr = np.mean(1 / (val_pred_label + 1))
+        # logger.info(f'train mrr: {trn_mrr:.2f} | val mrr: {val_mrr:.2f}')
+
         # make prediction
-        trn_pred = model.predict(x=[trn_numerics, trn_imp, trn_price[:, :, None], trn_cfilter], batch_size=1024)
+        trn_pred = model.predict(x=[trn_numerics, trn_price[:, :, None], trn_cfilter], batch_size=1024)
         trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
         plot_hist(trn_pred_label, y_trn, 'train')
         confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
         trn_mrr = np.mean(1 / (trn_pred_label + 1))
 
-        val_pred = model.predict(x=[val_numerics, val_imp, val_price[:, :, None], val_cfilter], batch_size=1024)
+        val_pred = model.predict(x=[val_numerics, val_price[:, :, None], val_cfilter], batch_size=1024)
         val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
         plot_hist(val_pred_label, y_val, 'validation')
         confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
@@ -157,7 +197,7 @@ if __name__ == '__main__':
     setup = {'nrows': 5000000,
              'recompute_train': False,
              'retrain': True,
-             'recompute_test': False}
+             'recompute_test': True}
 
     params = {'batch_size': 256,
               'n_epochs': 500,

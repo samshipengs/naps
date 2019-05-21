@@ -17,25 +17,25 @@ def flogger(df, name):
     logger.info(f'{name} shape: ({df.shape[0]:,}, {df.shape[1]})')
 
 
-def create_action_type_mapping(recompute=False):
-    filepath = Filepath.cache_path
-    filename = os.path.join(filepath, 'action_types_mapping.npy')
-
-    if os.path.isfile(filename) and not recompute:
-        logger.info(f'Load action_types mapping from existing: {filename}')
-        action_type2natural = np.load(filename).item()
-        n_unique_actions = len(action_type2natural)
-    else:
-        # hardcode
-        actions = ['search for poi', 'interaction item image', 'clickout item',
-                   'interaction item info', 'interaction item deals',
-                   'search for destination', 'filter selection',
-                   'interaction item rating', 'search for item',
-                   'change of sort order']
-        action_type2natural = {v: k for k, v in enumerate(actions)}
-        n_unique_actions = len(actions)
-        np.save(filename, action_type2natural)
-    return action_type2natural, n_unique_actions
+# def create_action_type_mapping(recompute=False):
+#     filepath = Filepath.cache_path
+#     filename = os.path.join(filepath, 'action_types_mapping.npy')
+#
+#     if os.path.isfile(filename) and not recompute:
+#         logger.info(f'Load action_types mapping from existing: {filename}')
+#         action_type2natural = np.load(filename).item()
+#         n_unique_actions = len(action_type2natural)
+#     else:
+#         # hardcode
+#         actions = ['search for poi', 'interaction item image', 'clickout item',
+#                    'interaction item info', 'interaction item deals',
+#                    'search for destination', 'filter selection',
+#                    'interaction item rating', 'search for item',
+#                    'change of sort order']
+#         action_type2natural = {v: k for k, v in enumerate(actions)}
+#         n_unique_actions = len(actions)
+#         np.save(filename, action_type2natural)
+#     return action_type2natural, n_unique_actions
 
 
 def prepare_data(mode, nrows=None, add_test=True, recompute=False):
@@ -78,7 +78,7 @@ def prepare_data(mode, nrows=None, add_test=True, recompute=False):
     return df
 
 
-def create_filters_mapping(recompute=False):
+def create_cfs_mapping(recompute=False):
     filename = os.path.join(Filepath.cache_path, 'filters_mapping.npy')
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load filters mapping from existing: {filename}')
@@ -90,6 +90,7 @@ def create_filters_mapping(recompute=False):
         print(tt.columns, '!' * 30)
         del train, test
         gc.collect()
+        tt['current_filters'] = tt['current_filters'].str.lower()
         tt['current_filters'] = tt['current_filters'].str.split('|')
         tt.dropna(subset=['current_filters'], inplace=True)
         cfs = np.concatenate(tt['current_filters'].values)
@@ -97,7 +98,7 @@ def create_filters_mapping(recompute=False):
         # choose the top 32
         selected_filters = cfs_ctn.index[:32].values
         rest_filters = cfs_ctn.index[32:].values
-        logger.info(f'select filters:\n{selected_filters} which covers {cfs_ctn.cumsum().iloc[31]}% '
+        logger.info(f'select filters:\n{selected_filters} which covers {cfs_ctn.cumsum().iloc[31]:.2f}% '
                     'of all not nan current_filters')
 
         filters2natural = {v: k for k, v in enumerate(selected_filters)}
@@ -105,7 +106,8 @@ def create_filters_mapping(recompute=False):
         for f in rest_filters:
             filters2natural[f] = len(selected_filters)
         np.save(filename, filters2natural)
-    return filters2natural
+    nf = len(filters2natural)
+    return filters2natural, nf
 
 
 # create some session features
@@ -132,23 +134,6 @@ def last_filters(cf):
         return cf[mask].iloc[-1]
 
 
-# def last_reference_id(rids, mode):
-#     mask = rids.notna()
-#     if mode == 'train':
-#         n = 1
-#         last_ref_loc = -2
-#     elif mode == 'test':
-#         n = 0
-#         last_ref_loc = -1
-#     else:
-#         raise ValueError(f'Invalid mode: {mode}')
-#     if mask.sum() <= n:
-#         return np.nan
-#     else:
-#         # the second last reference id i.e. the one before click out
-#         return rids[mask].iloc[last_ref_loc]
-
-
 def last_reference_id(grp, mode):
     mask = grp['reference'].notna()
     if mode == 'train':
@@ -164,23 +149,6 @@ def last_reference_id(grp, mode):
     else:
         # the second last reference id i.e. the one before click out and the associated action_type
         return grp[mask]['action_type'].iloc[last_ref_loc], grp[mask]['reference'].iloc[last_ref_loc]
-
-
-# def compute_session_fts(df, mode):
-#     last_rid = partial(last_reference_id, mode=mode)
-#     aggs = {'timestamp': [session_duration, dwell_time_prior_clickout],
-#             'current_filters': [last_filters],
-#             'session_id': 'size',
-#             'reference': [last_rid]}
-#     session_grp = df.groupby('session_id')
-#     session_fts = session_grp.agg(aggs)
-#     session_fts.columns = ['_'.join(col).strip() for col in session_fts.columns.values]
-#     logger.info(f'Session features generated: {list(session_fts.columns)}')
-#     session_fts.reset_index(inplace=True)
-#
-#     # add last_reference_id and its action_type
-#
-#     return pd.merge(df, session_fts, on='session_id')
 
 
 def compute_session_fts(df, mode):
@@ -213,7 +181,9 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
     nrows_ = nrows if nrows is not None else 15932993
     logger.info(f"\n{'='*10} Creating {mode.upper()} model inputs with {nrows_:,} rows and recompute={recompute} {'='*10}")
     filepath = Filepath.cache_path
-    filenames = ['numerics', 'impressions', 'prices', 'cfilters']
+    # filenames = ['numerics', 'impressions', 'prices', 'cfilters']
+    filenames = ['numerics', 'prices', 'cfilters']
+
     if mode == 'train':
         filenames.append('targets')
     filepaths = [os.path.join(filepath, f'{mode}_{fn}.npy') for fn in filenames]
@@ -224,7 +194,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
     else:
         logger.info(f'Prepare {mode} data')
         t_init = time.time()
-        df = prepare_data(mode, nrows=nrows, recompute=True)
+        df = prepare_data(mode, nrows=nrows, add_test=False, recompute=False)
         logger.info('Compute session features')
         df = compute_session_fts(df, mode)
 
@@ -270,11 +240,13 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
 
         logger.info('Split impression str to list of impressions')
         df['impressions'] = df['impressions'].str.split('|')
+        df['nimp'] = df['impressions'].str.len()/25
+
         logger.info('Convert impression str to int')
         df['impressions'] = df['impressions'].apply(lambda x: [int(i) for i in x])
-        logger.info('Pad 0s for impressions length shorter than 25')
-        df.loc[padding_mask, 'impressions'] = (df.loc[padding_mask, 'impressions']
-                                                 .apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant')))
+        # logger.info('Pad 0s for impressions length shorter than 25')
+        # df.loc[padding_mask, 'impressions'] = (df.loc[padding_mask, 'impressions']
+        #                                          .apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant')))
 
         if mode == 'train':
             logger.info('Assign target')
@@ -300,29 +272,10 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
 
         logger.info('Assign location of previous reference id')
 
-        # def assign_last_ref_id(row, divide=True):
-        #     ref = row['reference_last_reference_id']
-        #     # although reference_id got converted to int, but the reference_last_reference_id was calculated
-        #     # when it was still str value, so here we look up the index in str of impressions
-        #     imp = [str(i) for i in row['impressions']]
-        #
-        #     if pd.isna(ref):
-        #         return np.nan
-        #     else:
-        #         if ref in imp:
-        #             if divide:
-        #                 return (imp.index(ref) + 1) / len(imp)
-        #             else:
-        #                 return imp.index(ref) + 1
-        #         else:
-        #             return np.nan
-        
-        #_, n_unique_actions = create_action_type_mapping()
-
         def assign_last_ref_id(row, divide=True):
             action_id_pair = row['action_id_pair']
             if pd.isna(action_id_pair):
-                return np.zeros(2, dtype=int)
+                return np.zeros(3, dtype=int)
             # ref = row['reference_last_reference_id']
             # although reference_id got converted to int, but the reference_last_reference_id was calculated
             # when it was still str value, so here we look up the index in str of impressions
@@ -335,46 +288,46 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
                     else:
                         pos = imp.index(ref) + 1
                     if action_type == 'clickout item':
-                        return [pos, 1]
+                        return np.array([pos, 1, 0])
                     else:
-                        return [pos, 0]
+                        return np.array([pos, 0, 1])
                 else:
-                    return np.zeros(2, dtype=int)
+                    return np.zeros(3, dtype=int)
 
         logger.info('Divide last_ref_id by 25')
         assign_last_ref_id_func = partial(assign_last_ref_id, divide=True)
         df['last_ref_ind'] = df.apply(assign_last_ref_id_func, axis=1)
         
-        # create meta ohe
-        logger.info('Load meta data')
-        meta_df = load_data('item_metadata')
-        logger.info('Lower and split properties str to list')
-        meta_df['properties'] = meta_df['properties'].str.lower().str.split('|')
-        logger.info('Get all unique properties')
-        unique_properties = list(set(np.concatenate(meta_df['properties'].values)))
-        property2natural = {v: k for k, v in enumerate(unique_properties)}
-        n_properties = len(unique_properties)
-        logger.info(f'Total number of unique meta properties: {n_properties}')
-        logger.info('Convert the properties to ohe and superpose for each item_id')
-        meta_df['properties'] = meta_df['properties'].apply(lambda ps: [property2natural[p] for p in ps])
-        meta_df['properties'] = meta_df['properties'].apply(lambda ps: np.sum(np.eye(n_properties, dtype=int)[ps],
-                                                                              axis=0))
-        logger.info('Create mappings')
-        meta_mapping = dict(meta_df[['item_id', 'properties']].values)
-        logger.info('Saving meta mapping')
-        np.save(os.path.join(filepath, 'meta_mapping.npy'), meta_mapping)
-        # add a mapping (all zeros) for the padded impression ids
-        meta_mapping[0] = np.zeros(n_properties, dtype=int)
-        del meta_df, unique_properties, property2natural
-        gc.collect()
-
-        logger.info('Apply meta ohe mapping to impressions (this could take some time)')
-        df['impressions'] = (df['impressions'].apply(lambda imps: np.vstack([meta_mapping[i]
-                                                     if i in meta_mapping.keys()
-                                                     else np.zeros(n_properties, dtype=int)
-                                                     for i in imps])))
-        del meta_mapping
-        gc.collect()
+        # # create meta ohe
+        # logger.info('Load meta data')
+        # meta_df = load_data('item_metadata')
+        # logger.info('Lower and split properties str to list')
+        # meta_df['properties'] = meta_df['properties'].str.lower().str.split('|')
+        # logger.info('Get all unique properties')
+        # unique_properties = list(set(np.concatenate(meta_df['properties'].values)))
+        # property2natural = {v: k for k, v in enumerate(unique_properties)}
+        # n_properties = len(unique_properties)
+        # logger.info(f'Total number of unique meta properties: {n_properties}')
+        # logger.info('Convert the properties to ohe and superpose for each item_id')
+        # meta_df['properties'] = meta_df['properties'].apply(lambda ps: [property2natural[p] for p in ps])
+        # meta_df['properties'] = meta_df['properties'].apply(lambda ps: np.sum(np.eye(n_properties, dtype=int)[ps],
+        #                                                                       axis=0))
+        # logger.info('Create mappings')
+        # meta_mapping = dict(meta_df[['item_id', 'properties']].values)
+        # logger.info('Saving meta mapping')
+        # np.save(os.path.join(filepath, 'meta_mapping.npy'), meta_mapping)
+        # # add a mapping (all zeros) for the padded impression ids
+        # meta_mapping[0] = np.zeros(n_properties, dtype=int)
+        # del meta_df, unique_properties, property2natural
+        # gc.collect()
+        #
+        # logger.info('Apply meta ohe mapping to impressions (this could take some time)')
+        # df['impressions'] = (df['impressions'].apply(lambda imps: np.vstack([meta_mapping[i]
+        #                                              if i in meta_mapping.keys()
+        #                                              else np.zeros(n_properties, dtype=int)
+        #                                              for i in imps])))
+        # del meta_mapping
+        # gc.collect()
 
         logger.info('Create ohe superposition of filters')
         cfs2natural, n_cfs = create_cfs_mapping()
@@ -385,7 +338,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
                                               .apply(lambda cfs: [cfs2natural[cf] for cf in cfs]))
         del cfs2natural
         gc.collect()
-        # zeros if the cfs is nan (checked with type(cfs) is list not float
+        # zeros if the cfs is nan (checked with type(cfs) is list not float)
         df['cfs'] = (df['cfs'].apply(lambda cfs: np.sum(np.eye(n_cfs, dtype=int)[cfs], axis=0)
                                      if type(cfs) == list else np.zeros(n_cfs, dtype=int)))
 
@@ -396,11 +349,12 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         df.drop('prices', axis=1, inplace=True)
         save_cache(prices, f'{mode}_prices.npy')
 
-        logger.info('Getting impressions')
-        # IMPRESSIONS
-        impressions = np.array(list(df['impressions'].values))
         df.drop('impressions', axis=1, inplace=True)
-        save_cache(impressions, f'{mode}_impressions.npy')
+        # logger.info('Getting impressions')
+        # # IMPRESSIONS
+        # impressions = np.array(list(df['impressions'].values))
+        # df.drop('impressions', axis=1, inplace=True)
+        # save_cache(impressions, f'{mode}_impressions.npy')
 
         logger.info('Getting current_filters')
         # CURRENT_FILTERS
@@ -410,15 +364,18 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
 
         logger.info('Getting numerics')
         # numerics
-        num_cols = ['session_id_size', 'timestamp_dwell_time_prior_clickout']
+        num_cols = ['session_id_size', 'timestamp_dwell_time_prior_clickout', 'nimp']
         logger.info('Filling nans with value=-1')
         for c in num_cols:
-            df[c] = df[c].fillna(-1)
+            # df[c] = df[c].fillna(-1)
+            df[c] = df[c].fillna(0)
         numerics = np.concatenate((df[num_cols].values, np.array(list(df['last_ref_ind'].values))), axis=1)
         df.drop(num_cols, axis=1, inplace=True)
         save_cache(numerics, f'{mode}_numerics.npy')
 
-        model_inputs = {'numerics': numerics, 'impressions': impressions, 'prices': prices,
+        # model_inputs = {'numerics': numerics, 'impressions': impressions, 'prices': prices,
+        #                 'cfilters': cfilters}
+        model_inputs = {'numerics': numerics, 'prices': prices,
                         'cfilters': cfilters}
 
         if mode == 'train':

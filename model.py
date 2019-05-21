@@ -14,48 +14,93 @@ def build_model(n_cfs, params, dense_act='relu'):
     tcn_params = params['tcn_params']
     # build model =====================================================================================
     # NUMERICS
-    numerics_input = Input(shape=(4,), name='numerics_input')
-    numerics = Dense(8, activation=dense_act)(numerics_input)
+    numerics_input = Input(shape=(6,), name='numerics_input')
+    numerics_dense = Dense(16, activation=dense_act)(numerics_input)
 
-    # IMPRESSIONS
     # Receptive field = nb_stacks_of_residuals_blocks * kernel_size * last_dilation.
     receptive_field = tcn_params['nb_stacks']*tcn_params['kernel_size']*(tcn_params['dilations'][-1])
     logger.info(f'Receptive field is: {receptive_field}')
-
-    impression_input = Input(shape=(None, 157), name='impression_input')
-    tcn_params['name'] = 'impression_tcn'
-    impression_tcn = TCN(**tcn_params)(impression_input)
-    # CURRENT_FILTERS
-    cfilter_input = Input(shape=(n_cfs, ), name='cfilter_input')
-    cfilter_h = Dense(units=32, activation=dense_act)(cfilter_input)
-    cfilter_h = Dropout(0.2)(cfilter_h)
-    impression_cfilter_concat = concatenate([impression_tcn, cfilter_h])
-    impression_cfilter_h = Dense(units=32, activation=dense_act)(impression_cfilter_concat)
 
     # PRICES
     price_input = Input(shape=(None, 1), name='price_input')
     tcn_params['name'] = 'price_tcn'
     price_tcn = TCN(**tcn_params)(price_input)
-    # price_tcn = BatchNormalization()(price_tcn)
+    price_dense = Dense(32, activation=dense_act)(price_tcn)
 
-    # concatenate
-    concat = concatenate([numerics, price_tcn, impression_cfilter_h])
-    # concat1 = BatchNormalization()(concat1)
-    concat = Dense(units=128, activation=dense_act)(concat)
-    concat = Dropout(0.2)(concat)
+    # CURRENT_FILTERS
+    cfilter_input = Input(shape=(n_cfs, ), name='cfilter_input')
+    cfilter_dense = Dense(units=16, activation=dense_act)(cfilter_input)
+    cfilter_dense = Dropout(0.2)(cfilter_dense)
 
-    # last hidden layer
-    h = Dense(units=64, activation=dense_act)(concat)
+    # concatenate 1
+    concat1 = concatenate([price_tcn, numerics_input, cfilter_input])
+    concat1 = Dense(16, activation=dense_act)(concat1)
+    # concatenate 2
+    concat2 = concatenate([concat1, price_dense, numerics_dense, cfilter_dense])
+    concat2 = Dropout(0.2)(concat2)
 
-    output_layer = Dense(25, activation='softmax')(h)
+    # dense
+    hidden_layer = Dense(64, activation=dense_act)(concat2)
+    hidden_layer = Dense(32, activation=dense_act)(hidden_layer)
 
-    # [numerics_batch, impressions_batch, prices_batch,  cfilters_batch]
-    model = Model(inputs=[numerics_input, impression_input, price_input, cfilter_input],
+    output_layer = Dense(25, activation='softmax')(hidden_layer)
+
+    # [numerics_batch, prices_batch,  cfilters_batch]
+    model = Model(inputs=[numerics_input, price_input, cfilter_input],
                   outputs=output_layer)
 
     opt = optimizers.Adam(lr=params['learning_rate'])
     model.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=['accuracy'])
     return model
+
+
+# def build_model(n_cfs, params, dense_act='relu'):
+#     K.clear_session()
+#     tcn_params = params['tcn_params']
+#     # build model =====================================================================================
+#     # NUMERICS
+#     numerics_input = Input(shape=(4,), name='numerics_input')
+#     numerics = Dense(8, activation=dense_act)(numerics_input)
+#
+#     # IMPRESSIONS
+#     # Receptive field = nb_stacks_of_residuals_blocks * kernel_size * last_dilation.
+#     receptive_field = tcn_params['nb_stacks']*tcn_params['kernel_size']*(tcn_params['dilations'][-1])
+#     logger.info(f'Receptive field is: {receptive_field}')
+#
+#     impression_input = Input(shape=(None, 157), name='impression_input')
+#     tcn_params['name'] = 'impression_tcn'
+#     impression_tcn = TCN(**tcn_params)(impression_input)
+#     # CURRENT_FILTERS
+#     cfilter_input = Input(shape=(n_cfs, ), name='cfilter_input')
+#     cfilter_h = Dense(units=32, activation=dense_act)(cfilter_input)
+#     cfilter_h = Dropout(0.2)(cfilter_h)
+#     impression_cfilter_concat = concatenate([impression_tcn, cfilter_h])
+#     impression_cfilter_h = Dense(units=32, activation=dense_act)(impression_cfilter_concat)
+#
+#     # PRICES
+#     price_input = Input(shape=(None, 1), name='price_input')
+#     tcn_params['name'] = 'price_tcn'
+#     price_tcn = TCN(**tcn_params)(price_input)
+#     # price_tcn = BatchNormalization()(price_tcn)
+#
+#     # concatenate
+#     concat = concatenate([numerics, price_tcn, impression_cfilter_h])
+#     # concat1 = BatchNormalization()(concat1)
+#     concat = Dense(units=128, activation=dense_act)(concat)
+#     concat = Dropout(0.2)(concat)
+#
+#     # last hidden layer
+#     h = Dense(units=64, activation=dense_act)(concat)
+#
+#     output_layer = Dense(25, activation='softmax')(h)
+#
+#     # [numerics_batch, impressions_batch, prices_batch,  cfilters_batch]
+#     model = Model(inputs=[numerics_input, impression_input, price_input, cfilter_input],
+#                   outputs=output_layer)
+#
+#     opt = optimizers.Adam(lr=params['learning_rate'])
+#     model.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=['accuracy'])
+#     return model
 
 
 

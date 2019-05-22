@@ -15,40 +15,39 @@ def build_model(n_cfs, params, dense_act='relu'):
     # build model =====================================================================================
     # NUMERICS
     numerics_input = Input(shape=(6,), name='numerics_input')
-    numerics_dense = Dense(16, activation=dense_act)(numerics_input)
+    numerics_dense = Dense(16, activation=dense_act, name='num_dense')(numerics_input)
 
     # IMPRESSIONS
     # Receptive field = nb_stacks_of_residuals_blocks * kernel_size * last_dilation.
     receptive_field = tcn_params['nb_stacks']*tcn_params['kernel_size']*(tcn_params['dilations'][-1])
     logger.info(f'Receptive field is: {receptive_field}')
 
-
     # CURRENT_FILTERS
     cfilter_input = Input(shape=(n_cfs, ), name='cfilter_input')
-    cfilter_dense1 = Dense(units=16, activation=dense_act)(cfilter_input)
-    cfilter_dense2 = Dropout(0.2)(cfilter_dense1)
+    cfilter_dense1 = Dense(units=16, activation=dense_act, name='cfilter_dense1')(cfilter_input)
+    cfilter_dense2 = Dense(units=8, activation=dense_act, name='cfilter_dense2')(cfilter_dense1)
 
     # PRICES
     price_input = Input(shape=(None, 2), name='price_input')
     tcn_params['name'] = 'price_tcn'
     price_tcn = TCN(**tcn_params)(price_input)
-    price_dense = Dense(units=32, activation=dense_act)(price_tcn)
+    price_dense = Dense(units=32, activation=dense_act, name='price_dense')(price_tcn)
 
     # concatenate
     concat1 = concatenate([numerics_input, price_tcn, cfilter_dense1])
-    concat1 = Dense(units=64, activation=dense_act)(concat1)
+    concat1 = Dense(units=64, activation=dense_act, name='concat1_dense')(concat1)
     concat1 = Dropout(0.2)(concat1)
 
     # concatenate
     concat2 = concatenate([concat1, numerics_dense, price_dense,
                            cfilter_dense2])
-    concat2 = Dense(units=64, activation=dense_act)(concat2)
+    concat2 = Dense(units=64, activation=dense_act, name='concat2_dense')(concat2)
     concat2 = Dropout(0.2)(concat2)
 
     # last hidden layer
-    h = Dense(units=32, activation=dense_act)(concat2)
+    h = Dense(units=32, activation=dense_act, name='last_dense')(concat2)
 
-    output_layer = Dense(25, activation='softmax')(h)
+    output_layer = Dense(25, activation='softmax', name='output_dense')(h)
 
     # [numerics_batch, impressions_batch, prices_batch,  cfilters_batch]
     model = Model(inputs=[numerics_input, price_input, cfilter_input],

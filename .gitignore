@@ -16,7 +16,7 @@ cat_feature_index*
 .idea
 *.pyc
 __pycache__
-
+*classifier*
 # other
 *.DS_Store
 geckodriver

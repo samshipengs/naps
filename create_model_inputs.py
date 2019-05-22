@@ -26,23 +26,12 @@ def create_action_type_mapping(recompute=False):
         action_type2natural = np.load(filename).item()
         n_unique_actions = len(action_type2natural)
     else:
-        # train = load_data('train', nrows=None, usecols=['action_type'])
-        # test = load_data('test', nrows=None, usecols=['action_type'])
-        # train = train[train['action_type'].notna()]
-        # test = test[test['action_type'].notna()]
-        # df = pd.concat([train, test], axis=0, ignore_index=True)
-        # del train, test
-        # gc.collect()
-        # actions = df['action_type'].unique()
-        # del df
-        # gc.collect()
-
         # hardcode
-        actions = ['search for poi', 'interaction item image', 'clickout item',
-                     'interaction item info', 'interaction item deals',
-                     'search for destination', 'filter selection',
-                     'interaction item rating', 'search for item',
-                     'change of sort order']
+        actions = ['clickout item', 'search for poi', 'interaction item image',
+                   'interaction item info', 'interaction item deals',
+                   'search for destination', 'filter selection',
+                   'interaction item rating', 'search for item',
+                   'change of sort order']
         action_type2natural = {v: k for k, v in enumerate(actions)}
         n_unique_actions = len(actions)
         np.save(filename, action_type2natural)
@@ -315,7 +304,7 @@ def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=Fal
                     #     return [pos, 1]
                     # else:
                     #     return [pos, 0]
-                    return [pos, action_type]
+                    return [pos, action_type]  # ! this may need to get chnaged
                 else:
                     return [np.nan, action_type]
 

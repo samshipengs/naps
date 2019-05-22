@@ -3,14 +3,13 @@ import time
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import StratifiedKFold
-import catboost as cat
+import lightgbm as lgb
 
 from create_model_inputs import create_model_inputs, click_view_encoding
 from utils import get_logger, get_data_path, check_gpu
 from plots import plot_hist, confusion_matrix, plot_imp_cat
 
-
-logger = get_logger('train_model')
+logger = get_logger('train_lgb')
 Filepath = get_data_path()
 
 
@@ -33,7 +32,8 @@ def train(train_inputs, params, add_cv_encoding=False, retrain=False):
     t_init = time.time()
     for fold, (trn_ind, val_ind) in enumerate(skf.split(targets, targets)):
         logger.info(f'Training fold {fold}: train len={len(trn_ind):,} | val len={len(val_ind):,}')
-        x_trn, x_val = train_inputs.iloc[trn_ind].reset_index(drop=True), train_inputs.iloc[val_ind].reset_index(drop=True)
+        x_trn, x_val = train_inputs.iloc[trn_ind].reset_index(drop=True), train_inputs.iloc[val_ind].reset_index(
+            drop=True)
         y_trn, y_val = targets.iloc[trn_ind], targets.iloc[val_ind]
         # cv encoding
         if add_cv_encoding:
@@ -42,47 +42,54 @@ def train(train_inputs, params, add_cv_encoding=False, retrain=False):
             cv_encoding = click_view_encoding(sids_trn, fold, m=5, nrows=None, recompute=False)
             # cv_encoding = dict(cv_encoding[['item_id', 'clicked']].values)
             # imp_cols = [f'imp_{i}' for i in range(25)]
-            
+
             cv_encode(x_trn, cv_encoding)
             cv_encode(x_val, cv_encoding)
             x_trn.drop('session_id', axis=1, inplace=True)
             x_val.drop('session_id', axis=1, inplace=True)
+        lgb_trn_data = lgb.Dataset(x_trn, label=y_trn, free_raw_data=False)
+        lgb_val_data = lgb.Dataset(x_val, label=y_val, free_raw_data=False)
 
-        
         # =====================================================================================
         # create model
-        model_filename = os.path.join(model_path, f'cv{fold}.model')
+        model_filename = os.path.join(model_path, f'lgb_classifier{fold}')
         if os.path.isfile(model_filename) and not retrain:
             logger.info(f'Loading model from existing {model_filename}')
             # model = load_model(model_filename)
-            clf = cat.CatBoostClassifier()  # parameters not required.
-            clf.load_model(model_filename)
+            # clf = cat.CatBoostClassifier()  # parameters not required.
+            clf = lgb.Booster(model_file=model_filename)
+            # clf.load_model(model_filename)
         else:
             # train model
-            clf = cat.CatBoostClassifier(**params)
-            clf.fit(x_trn, y_trn,
-                    eval_set=(x_val, y_val),
-                    early_stopping_rounds=100,
-                    verbose=100,
-                    plot=False)
-            trn_imp = clf.get_feature_importance(data=cat.Pool(data=x_trn, label=y_trn),
-                                                 prettified=True,
-                                                 type='FeatureImportance')
+            # clf = cat.CatBoostClassifier(**params)
+            clf = lgb.train(params,
+                            lgb_trn_data,
+                            valid_sets=[lgb_trn_data, lgb_val_data],
+                            valid_names=['train', 'val'],
+                            verbose_eval=100)
+            # clf.fit(x_trn, y_trn,
+            #         eval_set=(x_val, y_val),
+            #         early_stopping_rounds=100,
+            #         verbose=100,
+            #         plot=False)
+            # trn_imp = clf.get_feature_importance(data=cat.Pool(data=x_trn, label=y_trn),
+            #                                      prettified=True,
+            #                                      type='FeatureImportance')
 
             # plot_imp_cat(trn_imp, 'train')
-            if trn_imp:
-                plot_imp_cat(trn_imp, fold)
+            # if trn_imp:
+            #     plot_imp_cat(trn_imp, fold)
 
             clf.save_model(model_filename)
 
         # make prediction
-        trn_pred = clf.predict_proba(x_trn)
+        trn_pred = clf.predict(x_trn)
         trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.values.reshape(-1, 1))[1]
         plot_hist(trn_pred_label, y_trn, 'train')
         confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
         trn_mrr = np.mean(1 / (trn_pred_label + 1))
 
-        val_pred = clf.predict_proba(x_val)
+        val_pred = clf.predict(x_val)
         val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.values.reshape(-1, 1))[1]
         plot_hist(val_pred_label, y_val, 'validation')
         confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
@@ -91,28 +98,28 @@ def train(train_inputs, params, add_cv_encoding=False, retrain=False):
 
         clfs.append(clf)
 
-    logger.info(f'Total time took: {(time.time()-t_init)/60:.2f} mins')
+    logger.info(f'Total time took: {(time.time() - t_init) / 60:.2f} mins')
     return clfs
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 1000000,
+    setup = {'nrows': None,
              'add_cv_encoding': False,
-             'recompute_train': False,
+             'recompute_train': True,
              'retrain': True,
              'recompute_test': True}
 
-    device = 'GPU' if check_gpu() else 'CPU'
-    params = {'loss_function': 'MultiClass',
-              'custom_metric': ['MultiClass', 'Accuracy'],
-              'eval_metric': 'MultiClass',
-              'iterations': 1000,
-              'learning_rate': 0.02,
-              'depth': 8,
-              'task_type': device}
+    params = {'objective': 'multiclass',
+              'num_class': 25,
+              'metric': ['multi_logloss'],# 'accuracy'],
+              'verbose': -1,
+              'seed': 42,
+              'num_boost_round': 1000,
+              'early_stopping_rounds': 100,
+              'learning_rate': 0.02}
 
-    logger.info(f"\nSetup\n{'='*20}\n{setup}\n{'='*20}")
-    logger.info(f"\nParams\n{'='*20}\n{params}\n{'='*20}")
+    logger.info(f"\nSetup\n{'=' * 20}\n{setup}\n{'=' * 20}")
+    logger.info(f"\nParams\n{'=' * 20}\n{params}\n{'=' * 20}")
 
     # first create training inputs
     train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], add_cv_encoding=setup['add_cv_encoding'],
@@ -140,7 +147,7 @@ if __name__ == '__main__':
         if setup['add_cv_encoding']:
             cv_encoding = click_view_encoding(sids=None, fold=c, m=5, nrows=None, recompute=False)
             cv_encode(test_inputs, cv_encoding)
-        test_pred = clf.predict_proba(test_inputs)
+        test_pred = clf.predict(test_inputs)
         test_predictions.append(test_pred)
 
     logger.info('Generating submission by averaging cv predictions')
@@ -151,7 +158,7 @@ if __name__ == '__main__':
     # pad to 25
     test_sub['impressions'] = test_sub['impressions'].str.split('|')
     print(test_sub['impressions'].str.len().describe())
-    test_sub['impressions'] = test_sub['impressions'].apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant'))
+    test_sub['impressions'] = test_sub['impressions'].apply(lambda x: np.pad(x, (0, 25 - len(x)), mode='constant'))
     test_impressions = np.array(list(test_sub['impressions'].values))
 
     test_impressions_pred = test_impressions[np.arange(len(test_impressions))[:, None], test_pred_label]

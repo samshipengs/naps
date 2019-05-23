@@ -75,7 +75,8 @@ def train(train_inputs, params, add_cv_encoding=False, retrain=False, continue_t
             clf = lgb.Booster(model_file=model_filename)
         else:
             if continue_train:
-                # train model
+                logger.info(f'Continue training from {model_filename}')
+                # continue train model
                 assert os.path.isfile(model_filename), f'{model_filename} does not exist!'
                 clf = lgb.train(params,
                                 lgb_trn_data,

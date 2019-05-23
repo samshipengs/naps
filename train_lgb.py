@@ -37,7 +37,7 @@ def compute_mrr(y_pred, y_true):
     return np.mean(1 / (pred_label + 1))
 
 
-def train(train_inputs, params, add_cv_encoding=False, retrain=False):
+def train(train_inputs, params, add_cv_encoding=False, retrain=False, continue_train=False):
     cache_path = Filepath.gbm_cache_path
     model_path = Filepath.model_path
 
@@ -74,13 +74,23 @@ def train(train_inputs, params, add_cv_encoding=False, retrain=False):
             logger.info(f'Loading model from existing {model_filename}')
             clf = lgb.Booster(model_file=model_filename)
         else:
-            # train model
-            clf = lgb.train(params,
-                            lgb_trn_data,
-                            valid_sets=[lgb_trn_data, lgb_val_data],
-                            valid_names=['train', 'val'],
-                            # feval=compute_mrr_lgb,
-                            verbose_eval=100)
+            if continue_train:
+                # train model
+                assert os.path.isfile(model_filename), f'{model_filename} does not exist!'
+                clf = lgb.train(params,
+                                lgb_trn_data,
+                                valid_sets=[lgb_trn_data, lgb_val_data],
+                                valid_names=['train', 'val'],
+                                init_model=lgb.Booster(model_file=model_filename),
+                                verbose_eval=100)
+            else:
+                # train model
+                clf = lgb.train(params,
+                                lgb_trn_data,
+                                valid_sets=[lgb_trn_data, lgb_val_data],
+                                valid_names=['train', 'val'],
+                                # feval=compute_mrr_lgb,
+                                verbose_eval=100)
             # grab feature importances
             imp_df = pd.DataFrame()
             imp_df['feature_importance'] = clf.feature_importance(importance_type='gain',
@@ -113,9 +123,10 @@ def train(train_inputs, params, add_cv_encoding=False, retrain=False):
 if __name__ == '__main__':
     setup = {'nrows': None,
              'add_cv_encoding': False,
-             'recompute_train': True,
+             'recompute_train': False,
              'retrain': True,
-             'recompute_test': True}
+             'continue_train': True,
+             'recompute_test': False}
 
     params = {'boosting': 'gbdt',  # gbdt, dart, goss
               'max_depth': 5,
@@ -141,7 +152,8 @@ if __name__ == '__main__':
     train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], add_cv_encoding=setup['add_cv_encoding'],
                                        recompute=setup['recompute_train'])
     # train the model
-    models = train(train_inputs, params=params, add_cv_encoding=setup['add_cv_encoding'], retrain=setup['retrain'])
+    models = train(train_inputs, params=params, add_cv_encoding=setup['add_cv_encoding'], retrain=setup['retrain'],
+                   continue_train=setup['continue_train'])
     # get the test inputs
     test_inputs = create_model_inputs(mode='test', nrows=setup['nrows'], add_cv_encoding=setup['add_cv_encoding'],
                                       recompute=setup['recompute_test'])

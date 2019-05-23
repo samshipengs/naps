@@ -2,6 +2,8 @@ import os
 import time
 import pandas as pd
 import numpy as np
+from datetime import datetime as dt
+
 from sklearn.model_selection import StratifiedKFold
 import catboost as cat
 
@@ -39,7 +41,7 @@ def train(train_inputs, params, add_cv_encoding=False, retrain=False):
         if add_cv_encoding:
             sids_trn = x_trn['session_id'].unique()
             logger.info('Add click-view/impression encodings')
-            cv_encoding = click_view_encoding(sids_trn, fold, m=5, nrows=None, recompute=False)
+            cv_encoding = click_view_encoding(sids_trn, fold, m=500, nrows=None, recompute=False)
             # cv_encoding = dict(cv_encoding[['item_id', 'clicked']].values)
             # imp_cols = [f'imp_{i}' for i in range(25)]
             
@@ -138,7 +140,7 @@ if __name__ == '__main__':
         test_sub_m = test_sub.copy()
         logger.info(f'Generating predictions from model {c}')
         if setup['add_cv_encoding']:
-            cv_encoding = click_view_encoding(sids=None, fold=c, m=5, nrows=None, recompute=False)
+            cv_encoding = click_view_encoding(sids=None, fold=c, m=100, nrows=None, recompute=True)
             cv_encode(test_inputs, cv_encoding)
         test_pred = clf.predict_proba(test_inputs)
         test_predictions.append(test_pred)
@@ -164,6 +166,7 @@ if __name__ == '__main__':
     del test_sub['item_recommendations']
     test_sub.rename(columns={'recommendations': 'item_recommendations'}, inplace=True)
     test_sub = test_sub[sub_columns]
-    test_sub.to_csv(os.path.join(Filepath.sub_path, f'sub.csv'), index=False)
+    current_time = dt.now().strftime('%m-%d')
+    test_sub.to_csv(os.path.join(Filepath.sub_path, f'cat_sub_{current_time}.csv'), index=False)
     logger.info('Done all')
 

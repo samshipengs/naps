@@ -2,35 +2,54 @@ import os
 import time
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import StratifiedKFold
+from datetime import datetime as dt
+
+from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 import lightgbm as lgb
 
 from create_model_inputs import create_model_inputs, click_view_encoding
-from utils import get_logger, get_data_path, check_gpu
-from plots import plot_hist, confusion_matrix, plot_imp_cat
+from utils import get_logger, get_data_path, ignore_warnings
+from plots import plot_hist, confusion_matrix, plot_imp_lgb
+
+ignore_warnings()
 
 logger = get_logger('train_lgb')
 Filepath = get_data_path()
 
 
 def cv_encode(df, mapping):
-    # df[imp_cols] = pd.DataFrame(df['impressions'].values.tolist(), index=df.index)
     imp_cols = [f'imp_{i}' for i in range(25)]
     for c in imp_cols:
         df[c] = df[c].map(mapping)
 
 
+# def compute_mrr_lgb(y_pred_flat, dtrain):
+#     y_pred = y_pred_flat.reshape(-1, 25)
+#     y_true = dtrain.get_label()
+#     # print(y_pred.shape, y_true.shape)
+#     pred_label = np.where(np.argsort(y_pred)[:, ::-1] == y_true.values.reshape(-1, 1))[1]
+#     mrr = np.mean(1 / (pred_label + 1))
+#     return 'mrr', mrr, True
+
+
+def compute_mrr(y_pred, y_true):
+    pred_label = np.where(np.argsort(y_pred)[:, ::-1] == y_true.values.reshape(-1, 1))[1]
+    return np.mean(1 / (pred_label + 1))
+
+
 def train(train_inputs, params, add_cv_encoding=False, retrain=False):
-    cache_path = Filepath.cache_path
+    cache_path = Filepath.gbm_cache_path
     model_path = Filepath.model_path
 
     targets = train_inputs['target']
     train_inputs.drop('target', axis=1, inplace=True)
 
-    skf = StratifiedKFold(n_splits=6)
+    # skf = StratifiedKFold(n_splits=6)
+    sss = StratifiedShuffleSplit(n_splits=6, test_size=0.15, random_state=42)
+
     clfs = []
     t_init = time.time()
-    for fold, (trn_ind, val_ind) in enumerate(skf.split(targets, targets)):
+    for fold, (trn_ind, val_ind) in enumerate(sss.split(targets, targets)):
         logger.info(f'Training fold {fold}: train len={len(trn_ind):,} | val len={len(val_ind):,}')
         x_trn, x_val = train_inputs.iloc[trn_ind].reset_index(drop=True), train_inputs.iloc[val_ind].reset_index(
             drop=True)
@@ -39,9 +58,7 @@ def train(train_inputs, params, add_cv_encoding=False, retrain=False):
         if add_cv_encoding:
             sids_trn = x_trn['session_id'].unique()
             logger.info('Add click-view/impression encodings')
-            cv_encoding = click_view_encoding(sids_trn, fold, m=5, nrows=None, recompute=False)
-            # cv_encoding = dict(cv_encoding[['item_id', 'clicked']].values)
-            # imp_cols = [f'imp_{i}' for i in range(25)]
+            cv_encoding = click_view_encoding(sids_trn, fold, m=100, nrows=None, recompute=False)
 
             cv_encode(x_trn, cv_encoding)
             cv_encode(x_val, cv_encoding)
@@ -55,30 +72,21 @@ def train(train_inputs, params, add_cv_encoding=False, retrain=False):
         model_filename = os.path.join(model_path, f'lgb_classifier{fold}')
         if os.path.isfile(model_filename) and not retrain:
             logger.info(f'Loading model from existing {model_filename}')
-            # model = load_model(model_filename)
-            # clf = cat.CatBoostClassifier()  # parameters not required.
             clf = lgb.Booster(model_file=model_filename)
-            # clf.load_model(model_filename)
         else:
             # train model
-            # clf = cat.CatBoostClassifier(**params)
             clf = lgb.train(params,
                             lgb_trn_data,
                             valid_sets=[lgb_trn_data, lgb_val_data],
                             valid_names=['train', 'val'],
+                            # feval=compute_mrr_lgb,
                             verbose_eval=100)
-            # clf.fit(x_trn, y_trn,
-            #         eval_set=(x_val, y_val),
-            #         early_stopping_rounds=100,
-            #         verbose=100,
-            #         plot=False)
-            # trn_imp = clf.get_feature_importance(data=cat.Pool(data=x_trn, label=y_trn),
-            #                                      prettified=True,
-            #                                      type='FeatureImportance')
-
-            # plot_imp_cat(trn_imp, 'train')
-            # if trn_imp:
-            #     plot_imp_cat(trn_imp, fold)
+            # grab feature importances
+            imp_df = pd.DataFrame()
+            imp_df['feature_importance'] = clf.feature_importance(importance_type='gain',
+                                                                  iteration=clf.best_iteration)
+            imp_df['features'] = x_trn.columns
+            plot_imp_lgb(imp_df, fold)
 
             clf.save_model(model_filename)
 
@@ -109,14 +117,22 @@ if __name__ == '__main__':
              'retrain': True,
              'recompute_test': True}
 
-    params = {'objective': 'multiclass',
+    params = {'boosting': 'gbdt',  # gbdt, dart, goss
+              'max_depth': 5,
+              'num_leaves': 6,
+              'feature_fraction': 0.9,
+              'num_boost_round': 3000,
+              'early_stopping_rounds': 100,
+              'learning_rate': 0.01,
+              'objective': 'multiclass',
               'num_class': 25,
-              'metric': ['multi_logloss'],# 'accuracy'],
+              'metric': ['multi_logloss'],
               'verbose': -1,
               'seed': 42,
-              'num_boost_round': 1000,
-              'early_stopping_rounds': 100,
-              'learning_rate': 0.02}
+              }
+    if params['boosting'] != 'goss':
+        params['bagging_fraction'] = 0.9
+        params['bagging_freq'] = 1
 
     logger.info(f"\nSetup\n{'=' * 20}\n{setup}\n{'=' * 20}")
     logger.info(f"\nParams\n{'=' * 20}\n{params}\n{'=' * 20}")
@@ -171,6 +187,7 @@ if __name__ == '__main__':
     del test_sub['item_recommendations']
     test_sub.rename(columns={'recommendations': 'item_recommendations'}, inplace=True)
     test_sub = test_sub[sub_columns]
-    test_sub.to_csv(os.path.join(Filepath.sub_path, f'sub.csv'), index=False)
+    current_time = dt.now().strftime('%m-%d')
+    test_sub.to_csv(os.path.join(Filepath.sub_path, f'lgb_sub_{current_time}.csv'), index=False)
     logger.info('Done all')
 

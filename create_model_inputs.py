@@ -18,7 +18,7 @@ def flogger(df, name):
 
 
 def create_action_type_mapping(recompute=False):
-    filepath = Filepath.cache_path
+    filepath = Filepath.gbm_cache_path
     filename = os.path.join(filepath, 'action_types_mapping.npy')
 
     if os.path.isfile(filename) and not recompute:
@@ -103,9 +103,7 @@ def last_reference_id(grp, mode):
 
 
 def compute_session_fts(df, mode):
-    # last_rid = partial(last_reference_id, mode=mode)
     aggs = {'timestamp': [session_duration, dwell_time_prior_clickout],
-            # 'current_filters': [last_filters],
             'session_id': 'size'}
 
     session_grp = df[['session_id', 'timestamp']].groupby('session_id')
@@ -123,7 +121,7 @@ def compute_session_fts(df, mode):
     return pd.merge(df, session_fts, on='session_id')
 
 
-def click_view_encoding(sids, fold, m=5, nrows=None, recompute=False):
+def click_view_encoding(sids, fold, m=100, nrows=None, recompute=False):
     """
     encode click and view
     :param m: smoothing factor
@@ -131,7 +129,7 @@ def click_view_encoding(sids, fold, m=5, nrows=None, recompute=False):
     :param recompute:
     :return:
     """
-    filepath = Filepath.cache_path
+    filepath = Filepath.gbm_cache_path
     filename = os.path.join(filepath, f'fold{fold}_clickview_encodings.csv')
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load from existing file: {filename}')
@@ -156,7 +154,8 @@ def click_view_encoding(sids, fold, m=5, nrows=None, recompute=False):
         # create list of impressions
         ref_imp['impressions'] = ref_imp['impressions'].str.split('|')
         # remove the clicked id from impressions
-        ref_imp['impressions'] = ref_imp.apply(lambda row: list(set(row['impressions']) - set(row['reference'])), axis=1)
+        ref_imp['impressions'] = ref_imp.apply(lambda row: list(set(row['impressions']) - set(row['reference'])),
+                                               axis=1)
 
         # create 0 for impressions (viewed) and 1 for clicked
         # imps = ref_imp['impressions'].values
@@ -186,7 +185,7 @@ def click_view_encoding(sids, fold, m=5, nrows=None, recompute=False):
 
 
 def save_cache(arr, name):
-    filepath = Filepath.cache_path
+    filepath = Filepath.gbm_cache_path
     np.save(os.path.join(filepath, name), arr)
 
 
@@ -194,7 +193,7 @@ def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=Fal
     nrows_ = nrows if nrows is not None else 15932993
     logger.info(f"\n{'='*10} Creating {mode.upper()} model inputs with {nrows_:,} rows and recompute={recompute} {'='*10}")
     cv = 'with_imp' if add_cv_encoding else 'no_imp'
-    filename = os.path.join(Filepath.cache_path, f'{mode}_inputs_{cv}.snappy')
+    filename = os.path.join(Filepath.gbm_cache_path, f'{mode}_inputs_{cv}.snappy')
 
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load from existing {filename}')
@@ -202,7 +201,7 @@ def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=Fal
     else:
         logger.info(f'Prepare {mode} data')
         t_init = time.time()
-        df = prepare_data(mode, convert_action_type=True, nrows=nrows, recompute=True)
+        df = prepare_data(mode, convert_action_type=True, nrows=nrows, recompute=False)
         logger.info('Compute session features')
         df = compute_session_fts(df, mode)
 
@@ -231,6 +230,18 @@ def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=Fal
         logger.info('Split prices str to list and convert to int')
         df['prices'] = df['prices'].str.split('|')
         df['prices'] = df['prices'].apply(lambda x: [float(p) for p in x])
+
+        # def _rank_price(prices_row):
+        #     ps = np.array(prices_row)
+        #     sort_index = ps.argsort()
+        #     ranks = np.empty_like(sort_index)
+        #     n_prices = len(ps)
+        #     # get the rank (start from 1) percentage
+        #     ranks[sort_index] = (np.arange(n_prices) + 1) / n_prices
+        #     return ranks
+        # # add price rank
+        # df['prices_rank'] = df['prices'].apply(_rank_price)
+
         logger.info('Pad 0s for prices length shorter than 25')
         df['time_steps'] = df['prices'].str.len()
         padding_mask = df['time_steps'] < 25
@@ -238,8 +249,14 @@ def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=Fal
         df.loc[padding_mask, 'prices'] = df.loc[padding_mask, 'prices'].apply(lambda x: np.pad(x, (0, 25-len(x)),
                                                                                                mode='constant',
                                                                                                constant_values=np.nan))
-        # logger.info('Log1p-transform prices')
-        # df['prices'] = df['prices'].apply(lambda p: np.log1p(p))
+        # df.loc[padding_mask, 'prices_rank'] = (df
+        #                                        .loc[padding_mask, 'prices_rank']
+        #                                        .apply(lambda x: np.pad(x, (0, 25-len(x)),
+        #                                                                mode='constant',
+        #                                                                constant_values=np.nan)))
+        # df[[f'pr_{i}' for i in range(25)]] = pd.DataFrame(df['prices_rank'].values.tolist(),
+        #                                                   index=df.index)
+        # df.drop('prices_rank', axis=1, inplace=True)
         logger.info('Normalizing price')
 
         # maybe normalize to percentage within each records, check does each item_id have the same price
@@ -287,7 +304,6 @@ def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=Fal
         def assign_last_ref_id(row, divide=True):
             action_id_pair = row['action_id_pair']
             if pd.isna(action_id_pair):
-                # return np.zeros(2, dtype=int)
                 return [np.nan]*2
 
             # although reference_id got converted to int, but the reference_last_reference_id was calculated
@@ -300,10 +316,6 @@ def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=Fal
                         pos = (imp.index(ref) + 1) / len(imp)
                     else:
                         pos = imp.index(ref) + 1
-                    # if action_type == 2:
-                    #     return [pos, 1]
-                    # else:
-                    #     return [pos, 0]
                     return [pos, action_type]  # ! this may need to get chnaged
                 else:
                     return [np.nan, action_type]
@@ -314,7 +326,7 @@ def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=Fal
         df[['pos', 'at']] = pd.DataFrame(df['last_ref_ind'].values.tolist(), index=df.index)
 
         logger.debug('Saving session_ids for verification purposes')
-        np.save(os.path.join(Filepath.cache_path, f'{mode}_session_ids.npy'), df['session_id'].values)
+        np.save(os.path.join(Filepath.gbm_cache_path, f'{mode}_session_ids.npy'), df['session_id'].values)
 
         if add_cv_encoding:
             imp_cols = [f'imp_{i}' for i in range(25)]
@@ -324,8 +336,7 @@ def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=Fal
                          'last_ref_ind']
         else:
             drop_cols = ['session_id', 'user_id', 'impressions', 'timestamp', 'action_type', 
-                         'reference', 'action_id_pair',
-                         'last_ref_ind']
+                         'reference', 'action_id_pair', 'last_ref_ind']
         logger.info(f'Drop columns: {drop_cols}')
         df.drop(drop_cols, axis=1, inplace=True)
         logger.info(f'Generated {mode}_inputs columns:\n{df.columns}')

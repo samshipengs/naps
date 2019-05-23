@@ -67,7 +67,7 @@ def plot_imp_cat(data, fold_, plot_n=15):
     fig.savefig('./imps/{}.png'.format(fold_))
 
 
-def plot_imp_lgb(imp_df, fold_, mrr, plot_n=15):
+def plot_imp_lgb(imp_df, fold_, plot_n=15):
     """
     This funciton is to plot the feature importance for top plot_n features
     :param imp_df: feature importance dataframe
@@ -80,7 +80,6 @@ def plot_imp_lgb(imp_df, fold_, mrr, plot_n=15):
     imp_asc = imp_df.sort_values(by='feature_importance', ascending=True)[:plot_n]
 
     fig, axes = plt.subplots(figsize=(8, 8), nrows=2, ncols=1)
-    axes[0].set_title(f"trn_mrr={np.round(mrr['train'], 4)} - val_mrr={np.round(mrr['val'], 4)}")
     _ = imp_des.plot(x='features', y='feature_importance', ax=axes[0], kind='barh', grid=True)
     _ = imp_asc.plot(x='features', y='feature_importance', ax=axes[1], kind='barh', grid=True)
     plt.tight_layout()

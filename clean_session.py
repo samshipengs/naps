@@ -49,7 +49,7 @@ def filter_clickout(grp, mode):
 
 
 def preprocess_sessions(df, mode, drop_duplicates=True, save=True, recompute=False):
-    filepath = Filepath.cache_path
+    filepath = Filepath.gbm_cache_path
     filename = os.path.join(filepath, f'preprocessed_{mode}.snappy')
 
     if os.path.isfile(filename) and not recompute:

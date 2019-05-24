@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import subprocess
 import os
@@ -136,3 +137,33 @@ def get_cpu_count(stable=True):
     logger.info(f'[number of cpu count: {ncpu}]')
     return ncpu
 
+
+def meta_encoding(recompute=False):
+    filepath = Filepath.gbm_cache_path
+    filename = os.path.join(filepath, 'meta_encodings.csv')
+    if os.path.isfile(filename) and not recompute:
+        logger.info(f'Load from existing file: {filename}')
+        encoding = pd.read_csv(filename)
+    else:
+        meta = load_data('item_metadata')
+        # get list of properties
+        meta['properties'] = meta['properties'].str.lower()
+        meta['properties'] = meta['properties'].str.split('|')
+
+        # create mapping
+        properties = list(set(np.concatenate(meta['properties'].values)))
+        property_mapping = {v: k for k, v in enumerate(properties)}
+        property_names = list(property_mapping.keys())
+        meta['properties'] = meta.properties.apply(lambda l: [property_mapping[i] for i in l])
+        # create zeros for encoding first
+        zeros = np.zeros((len(meta), len(property_mapping.keys())), dtype=int)
+        # then assign
+        ps = meta['properties']
+        for i in range(meta.shape[0]):
+            zeros[i, ps[i]] = 1
+
+        encoding = pd.DataFrame(zeros, columns=property_names, index=meta.item_id).reset_index()
+        encoding['item_id'] = encoding['item_id'].astype(int)
+        # save
+        encoding.to_csv(filename, index=False)
+    return encoding

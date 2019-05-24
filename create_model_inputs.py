@@ -38,7 +38,7 @@ def create_action_type_mapping(recompute=False):
     return action_type2natural, n_unique_actions
 
 
-def prepare_data(mode, convert_action_type=True, nrows=None, recompute=True):
+def prepare_data(mode, convert_action_type=True, nrows=None, select_cols=True, recompute=True):
     # first load data
     if mode == 'train':
         df = load_data(mode, nrows=nrows)
@@ -46,7 +46,8 @@ def prepare_data(mode, convert_action_type=True, nrows=None, recompute=True):
         df = load_data(mode)
     flogger(df, f'raw {mode}')
     # preprocess data i.e. dropping duplicates, only take sessions with clicks and clip to last click out
-    df = preprocess_sessions(df, mode=mode, drop_duplicates=True, save=True, recompute=recompute)
+    df = preprocess_sessions(df, mode=mode, drop_duplicates=True, save=True, nrows=nrows,
+                             recompute=recompute)
     if mode == 'test':
         # then load the test that we need to submit
         test_sub = load_data('submission_popular')
@@ -56,9 +57,10 @@ def prepare_data(mode, convert_action_type=True, nrows=None, recompute=True):
 
     # get time and select columns that get used
     df['timestamp'] = df['timestamp'].apply(lambda ts: datetime.datetime.utcfromtimestamp(ts))
-    usecols = ['user_id', 'session_id', 'timestamp', 'step', 'action_type', 'current_filters',
-               'reference', 'impressions', 'prices']
-    df = df[usecols]
+    if select_cols:
+        usecols = ['user_id', 'session_id', 'timestamp', 'step', 'action_type', 'current_filters',
+                   'reference', 'impressions', 'prices']
+        df = df[usecols]
     if convert_action_type:
         logger.info('Converting action_types to int (natural number)')
         action_type2natural, _ = create_action_type_mapping(recompute=False)

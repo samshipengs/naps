@@ -48,9 +48,9 @@ def filter_clickout(grp, mode):
     return has_clickout & has_ref
 
 
-def preprocess_sessions(df, mode, drop_duplicates=True, save=True, recompute=False):
+def preprocess_sessions(df, mode, nrows, drop_duplicates=True, save=True, recompute=False):
     filepath = Filepath.gbm_cache_path
-    filename = os.path.join(filepath, f'preprocessed_{mode}.snappy')
+    filename = os.path.join(filepath, f'preprocessed_{mode}_{nrows}.snappy')
 
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load from existing file: {filename}')

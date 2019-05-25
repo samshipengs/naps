@@ -142,7 +142,7 @@ def train(train_inputs, params, retrain=False):
                 callbacks.append(rp)
             if params['use_cyc']:
                 # step_size = (2 - 8)x(training iterations in epoch)
-                step_size = 5 * (len(y_trn) // batch_size)
+                step_size = 8 * (len(y_trn) // batch_size)
                 logger.info(f'Using cyclic learning rate with step_size: {step_size}')
                 # clr = CyclicLR(base_lr=params['min_lr'], max_lr=params['max_lr'], step_size=step_size)
                 clr = CyclicLR(base_lr=params['min_lr'], max_lr=params['max_lr'], step_size=step_size,
@@ -183,7 +183,7 @@ if __name__ == '__main__':
              'retrain': True,
              'recompute_test': True}
 
-    params = {'batch_size': 256,
+    params = {'batch_size': 512,
               'n_epochs': 2000,
               'early_stopping_patience': 50,
               'reduce_on_plateau_patience': 30,
@@ -197,9 +197,9 @@ if __name__ == '__main__':
                    'dropout_rate': 0.2,
                    'return_sequences': False,
                    'name': 'tcn'},
-              'learning_rate': 0.0005,
+              'learning_rate': 0.001,
               'max_lr': 0.005,
-              'min_lr': 0.0005,
+              'min_lr': 0.0001,
               'use_cyc': True,
               'early_stop': False,
               'reduce_on_plateau': False

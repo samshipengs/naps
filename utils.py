@@ -25,7 +25,8 @@ def check_dir(dirs):
 
 def get_data_path():
     path_dict = {'data_path': './data',
-                 'cache_path': './cache',
+                 'nn_cache_path': './nn_cache',
+                 'gbm_cache_path': './gbm_cache',
                  'sub_path': './subs',
                  'model_path': './models',
                  'plot_path': './plots',

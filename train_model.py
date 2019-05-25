@@ -125,7 +125,7 @@ def train(train_inputs, params, retrain=False):
             tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True, write_grads=True)
             callbacks.append(tb)
             # lr
-            lr = LRTensorBoard()
+            lr = LRTensorBoard(log_dir)
             callbacks.append(lr)
             # logging
             log = LoggingCallback(logger.info)

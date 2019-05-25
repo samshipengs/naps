@@ -19,7 +19,7 @@ def flogger(df, name):
 
 
 # def create_action_type_mapping(recompute=False):
-#     filepath = Filepath.cache_path
+#     filepath = Filepath.nn_cache_path
 #     filename = os.path.join(filepath, 'action_types_mapping.npy')
 #
 #     if os.path.isfile(filename) and not recompute:

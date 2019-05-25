@@ -5,14 +5,17 @@ from datetime import datetime as dt
 
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
-from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
+from keras import backend as K
+from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
 from keras.utils import plot_model
 from keras.models import load_model
-from keras.callbacks import Callback
+
 from utils import get_logger, get_data_path
 from model import build_model
 from create_model_inputs import create_model_inputs
 from plots import plot_hist, confusion_matrix
+from clr_callback import CyclicLR
+
 
 logger = get_logger('train_model')
 Filepath = get_data_path()
@@ -33,6 +36,15 @@ class LoggingCallback(Callback):
     def on_epoch_end(self, epoch, logs={}):
         msg = "[Epoch: %i] %s" % (epoch, ", ".join("%s: %f" % (k, v) for k, v in logs.items()))
         self.print_fcn(msg)
+
+
+class LRTensorBoard(TensorBoard):
+    def __init__(self, log_dir):  # add other arguments to __init__ if you need
+        super().__init__(log_dir=log_dir)
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs.update({'lr': K.eval(self.model.optimizer.lr)})
+        super().on_epoch_end(epoch, logs)
 
 
 def iterate_minibatches(numerics, merged, cfilters, targets, batch_size, shuffle=True):
@@ -112,15 +124,28 @@ def train(train_inputs, params, retrain=False):
                                     nparams))
             tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True, write_grads=True)
             callbacks.append(tb)
-            # simple early stopping
-            es = EarlyStopping(monitor='val_loss', mode='min', patience=params['early_stopping'], verbose=1)
-            callbacks.append(es)
-            # rp
-            rp = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=params['reduce_on_plateau'], verbose=1)
-            callbacks.append(rp)
+            # lr
+            lr = LRTensorBoard()
+            callbacks.append(lr)
             # logging
             log = LoggingCallback(logger.info)
             callbacks.append(log)
+            if params['early_stop']:
+                # simple early stopping
+                es = EarlyStopping(monitor='val_loss', mode='min', patience=params['early_stopping_patience'],
+                                   verbose=1)
+                callbacks.append(es)
+            if params['reduce_on_plateau']:
+                # rp
+                rp = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=params['reduce_on_plateau_patience'],
+                                       verbose=1)
+                callbacks.append(rp)
+            if params['use_cyc']:
+                # step_size = (2 - 8)x(training iterations in epoch)
+                step_size = 4 * (len(y_trn) // batch_size)
+                logger.info(f'Using cyclic learning rate with step_size: {step_size}')
+                clr = CyclicLR(base_lr=params['min_lr'], max_lr=params['max_lr'], step_size=step_size)
+                callbacks.append(clr)
 
             history = model.fit_generator(train_gen,
                                           steps_per_epoch=len(y_trn) // batch_size,
@@ -158,8 +183,8 @@ if __name__ == '__main__':
 
     params = {'batch_size': 256,
               'n_epochs': 2000,
-              'early_stopping': 50,
-              'reduce_on_plateau': 30,
+              'early_stopping_patience': 50,
+              'reduce_on_plateau_patience': 30,
               'tcn_params':
                   {'nb_filters': 32,
                    'kernel_size': 3,
@@ -171,6 +196,11 @@ if __name__ == '__main__':
                    'return_sequences': False,
                    'name': 'tcn'},
               'learning_rate': 0.001,
+              'max_lr': 0.006,
+              'min_lr': 0.001,
+              'use_cyc': True,
+              'early_stop': False,
+              'reduce_on_plateau': False
               }
 
     logger.info(f"\nSetup\n{'='*20}\n{setup}\n{'='*20}")

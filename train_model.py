@@ -142,9 +142,11 @@ def train(train_inputs, params, retrain=False):
                 callbacks.append(rp)
             if params['use_cyc']:
                 # step_size = (2 - 8)x(training iterations in epoch)
-                step_size = 4 * (len(y_trn) // batch_size)
+                step_size = 5 * (len(y_trn) // batch_size)
                 logger.info(f'Using cyclic learning rate with step_size: {step_size}')
-                clr = CyclicLR(base_lr=params['min_lr'], max_lr=params['max_lr'], step_size=step_size)
+                # clr = CyclicLR(base_lr=params['min_lr'], max_lr=params['max_lr'], step_size=step_size)
+                clr = CyclicLR(base_lr=params['min_lr'], max_lr=params['max_lr'], step_size=step_size,
+                               mode='exp_range', gamma=0.99994)
                 callbacks.append(clr)
 
             history = model.fit_generator(train_gen,
@@ -195,9 +197,9 @@ if __name__ == '__main__':
                    'dropout_rate': 0.2,
                    'return_sequences': False,
                    'name': 'tcn'},
-              'learning_rate': 0.001,
-              'max_lr': 0.006,
-              'min_lr': 0.001,
+              'learning_rate': 0.0005,
+              'max_lr': 0.005,
+              'min_lr': 0.0005,
               'use_cyc': True,
               'early_stop': False,
               'reduce_on_plateau': False

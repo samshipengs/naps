@@ -353,6 +353,10 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
                                      if type(cfs) == list else np.zeros(n_cfs, dtype=np.int16)))
 
         logger.info('Grabbing list of inputs')
+        # first get session_id for analyzing purpose
+        session_ids = df['session_id'].values
+        save_cache(session_ids, f'{mode}_session_ids.npy')
+        df.drop('session_id', axis=1, inplace=True)
 
         logger.info('Getting impressions')
         # IMPRESSIONS
@@ -407,6 +411,6 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
 if __name__ == '__main__':
     args = {'mode': 'train',
             'nrows': 1000000,
-            'recompute': False}
+            'recompute': True}
     logger.info(f'Creating data input: {args}')
     _ = create_model_inputs(**args)

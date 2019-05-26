@@ -89,6 +89,12 @@ def train(train_inputs, params, retrain=False):
         logger.info(f'Training fold {fold}')
         report_fold = {}
         trn_numerics, val_numerics = train_inputs['numerics'][trn_ind], train_inputs['numerics'][val_ind]
+        # normazlie the numerics
+        trn_m = np.mean(trn_numerics[:, [0, 1]], axis=0)
+        trn_sd = np.std(trn_numerics[:, [0, 1]], axis=0)
+        trn_numerics[:, [0, 1]] = (trn_numerics[:, [0, 1]] - trn_m)/trn_sd
+        val_numerics[:, [0, 1]] = (val_numerics[:, [0, 1]] - trn_m)/trn_sd
+
         trn_merged, val_merged = train_inputs['merged'][trn_ind], train_inputs['merged'][val_ind]
         trn_cfilter, val_cfilter = train_inputs['cfilters'][trn_ind], train_inputs['cfilters'][val_ind]
         y_trn, y_val = train_inputs['targets'][trn_ind], train_inputs['targets'][val_ind]

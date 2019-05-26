@@ -17,25 +17,25 @@ def flogger(df, name):
     logger.info(f'{name} shape: ({df.shape[0]:,}, {df.shape[1]})')
 
 
-# def create_action_type_mapping(recompute=False):
-#     filepath = Filepath.cache_path
-#     filename = os.path.join(filepath, 'action_types_mapping.npy')
-#
-#     if os.path.isfile(filename) and not recompute:
-#         logger.info(f'Load action_types mapping from existing: {filename}')
-#         action_type2natural = np.load(filename).item()
-#         n_unique_actions = len(action_type2natural)
-#     else:
-#         # hardcode
-#         actions = ['search for poi', 'interaction item image', 'clickout item',
-#                    'interaction item info', 'interaction item deals',
-#                    'search for destination', 'filter selection',
-#                    'interaction item rating', 'search for item',
-#                    'change of sort order']
-#         action_type2natural = {v: k for k, v in enumerate(actions)}
-#         n_unique_actions = len(actions)
-#         np.save(filename, action_type2natural)
-#     return action_type2natural, n_unique_actions
+def create_action_type_mapping(recompute=False):
+    filepath = Filepath.cache_path
+    filename = os.path.join(filepath, 'action_types_mapping.npy')
+
+    if os.path.isfile(filename) and not recompute:
+        logger.info(f'Load action_types mapping from existing: {filename}')
+        action_type2natural = np.load(filename).item()
+        n_unique_actions = len(action_type2natural)
+    else:
+        # hardcode
+        actions = ['search for poi', 'interaction item image', 'clickout item',
+                   'interaction item info', 'interaction item deals',
+                   'search for destination', 'filter selection',
+                   'interaction item rating', 'search for item',
+                   'change of sort order']
+        action_type2natural = {v: k for k, v in enumerate(actions)}
+        n_unique_actions = len(actions)
+        np.save(filename, action_type2natural)
+    return action_type2natural, n_unique_actions
 
 
 def prepare_data(mode, nrows=None, add_test=True, recompute=False):
@@ -57,7 +57,7 @@ def prepare_data(mode, nrows=None, add_test=True, recompute=False):
         else:
             df = load_data(mode)
         flogger(df, f'raw {mode}')
-        # preprocess data i.e. dropping duplicates, only take sessions with clicks and clip to last click out
+        # pre-process data i.e. dropping duplicates, only take sessions with clicks and clip to last click out
         df = preprocess_sessions(df, mode=mode, drop_duplicates=True, save=True, recompute=recompute)
         if mode == 'test':
             # then load the test that we need to submit
@@ -68,9 +68,9 @@ def prepare_data(mode, nrows=None, add_test=True, recompute=False):
 
         # get time and select columns that get used
         df['timestamp'] = df['timestamp'].apply(lambda ts: datetime.datetime.utcfromtimestamp(ts))
-        usecols = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters',
-                   'reference', 'impressions', 'prices']
-        df = df[usecols]
+        use_cols = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters',
+                    'reference', 'impressions', 'prices']
+        df = df[use_cols]
         logger.info('Sort df by session_id, timestamp, step')
         df = df.sort_values(by=['session_id', 'timestamp', 'step']).reset_index(drop=True)
         flogger(df, f'Prepared {mode} data')
@@ -110,47 +110,105 @@ def create_cfs_mapping(recompute=False):
     return filters2natural, nf
 
 
-# create some session features
-def session_duration(ts):
-    if len(ts) == 1:
-        return np.nan
-    else:
-        return (ts.max() - ts.min()).total_seconds()
+def compute_session_func(grp):
+    df = grp.copy()
+    # number of records in session
+    df['session_size'] = list(range(1, len(df)+1))
+
+    # session_time duration (subtract the min)
+    df['session_duration'] = (df['timestamp'] - df['timestamp'].min()).dt.total_seconds()
+
+    # get successive time difference
+    df['last_duration'] = df['timestamp'].diff().dt.total_seconds()
+    # df['last_duration'] = df['last_duration'].fillna(0) # do not fillna with 0 as it would indicate this is first row
+    df.drop('timestamp', axis=1, inplace=True)
+
+    # last reference id in current impression location and its action_type
+    df[['ref_shift', 'at_shift']] = df[['reference', 'action_type']].shift(1)
+
+    # previous click-outs
+    # now we only need to select rows with action_type that is clickout item
+    df = df[df['action_type'] == 'clickout item'].reset_index(drop=True)
+    df.drop('action_type', axis=1, inplace=True)
+
+    impressions = df['impressions'].dropna().values
+    unique_items = list(set([j for i in impressions for j in i] + list(df['reference'].unique())))
+
+    mapping = {v: k for k, v in enumerate(unique_items)}
+    df['reference_natural'] = df['reference'].map(mapping)
+    prev_cols = [f'prev_{i}' for i in range(len(unique_items))]
+    reference_df = pd.DataFrame(np.eye(len(unique_items), dtype=int)[df['reference_natural'].values],
+                                columns=prev_cols,
+                                index=df.index)
+    df.drop('reference_natural', axis=1, inplace=True)
+    df = pd.concat([df, reference_df], axis=1)
+    df[prev_cols] = df[prev_cols].cumsum().shift(1)
+    # df[prev_cols] = df[prev_cols].fillna(0) # do not fillna as it would indicate it's the first row
+
+    def match(row):
+        impressions_natural = [mapping[imp] for imp in row['impressions']]
+        return row[prev_cols].values[impressions_natural]
+    df['prev_clickouts'] = df.apply(match, axis=1)
+    # remove the prev ohe
+    df.drop(prev_cols, axis=1, inplace=True)
+
+    # come back to finding last reference relative location
+    def find_relative_loc(row):
+        if row['session_size'] == 1:
+            return np.nan
+        else:
+            ref_shift = row['ref_shift']
+            row_impressions = list(row['impressions'])
+            if ref_shift in row_impressions:
+                return row_impressions.index(ref_shift)
+            else:
+                return -1
+
+    df['ref_shift'] = df.apply(find_relative_loc, axis=1)
+    return df
 
 
-def dwell_time_prior_clickout(ts):
-    if len(ts) == 1:
-        return np.nan
-    else:
-        ts_sorted = ts.sort_values()
-        return (ts_sorted.iloc[-1] - ts_sorted.iloc[-2]).total_seconds()
+def compute_session(args):
+    # grab the args
+    gids, df = args
+    # selecting the assigned session ids and grouping on session level
+    grps = (df[df['session_id'].isin(gids)]
+            .reset_index(drop=True)
+            .groupby('session_id'))
+
+    # use apply to compute session level features
+    features = grps.apply(compute_session_func).reset_index(drop=True)
+    return features
 
 
-def last_filters(cf):
-    mask = cf.notna()
-    if mask.sum() == 0:
-        return np.nan
-    else:
-        return cf[mask].iloc[-1]
+def compute_session_fts(df, mode=None, nprocs=None):
+    # some processing before entering groupby
+    df['impressions'] = df['impressions'].str.split('|')
+    df['n_imps'] = df['impressions'].str.len()
 
+    t1 = time.time()
+    if nprocs is None:
+        nprocs = mp.cpu_count() - 1
+        logger.info('Using {} cores'.format(nprocs))
 
-def last_reference_id(grp, mode):
-    mask = grp['reference'].notna()
-    if mode == 'train':
-        n = 1
-        last_ref_loc = -2
-    elif mode == 'test':
-        n = 0
-        last_ref_loc = -1
-    else:
-        raise ValueError(f'Invalid mode: {mode}')
-    if mask.sum() <= n:
-        return np.nan
-    else:
-        # the second last reference id i.e. the one before click out and the associated action_type
-        return grp[mask]['action_type'].iloc[last_ref_loc], grp[mask]['reference'].iloc[last_ref_loc]
+    sids = df['session_id'].unique()
 
+    fts = []
 
+    # create iterator to pass in args
+    def args_gen():
+        for i in range(nprocs):
+            yield (sids[range(i, len(sids), nprocs)], df)
+    # init multiprocessing pool
+    pool = mp.Pool(nprocs)
+    for ft in pool.map(compute_session, args_gen()):
+        fts.append(ft)
+    pool.close()
+    pool.join()
+    fts_df = pd.concat(fts, axis=0)
+    fts_df.to_parquet(os.path.join(Filepath.cache_path, f'{mode}_session_fts.snappy'))
+    logger.info(f'Total time taken to generate fts: {(time.time()-t1)/60:.2f}mins')
+    return fts_df
 def compute_session_fts(df, mode):
     # last_rid = partial(last_reference_id, mode=mode)
     aggs = {'timestamp': [session_duration, dwell_time_prior_clickout],

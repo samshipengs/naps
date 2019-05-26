@@ -11,11 +11,11 @@
 catboost_info/
 cat_feature_index*
 # code
-#*.ipynb
 .ipynb_checkpoints
 .idea
 *.pyc
 __pycache__
+*classifier*
 
 # other
 *.DS_Store

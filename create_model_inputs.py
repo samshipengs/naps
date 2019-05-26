@@ -27,7 +27,7 @@ def create_action_type_mapping(recompute=False):
         n_unique_actions = len(action_type2natural)
     else:
         # hardcode
-        actions = ['search for poi', 'interaction item image', 'clickout item',
+        actions = ['clickout item', 'search for poi', 'interaction item image',
                    'interaction item info', 'interaction item deals',
                    'search for destination', 'filter selection',
                    'interaction item rating', 'search for item',
@@ -38,7 +38,7 @@ def create_action_type_mapping(recompute=False):
     return action_type2natural, n_unique_actions
 
 
-def prepare_data(mode, nrows=None, add_test=True, recompute=False):
+def prepare_data(mode, nrows=None, convert_action_type=True, add_test=True, recompute=False):
     nrows_str = 'all' if nrows is None else nrows
     add_test_str = 'with_test' if add_test else 'no_test'
     filename = os.path.join(Filepath.cache_path, f'{mode}_{nrows_str}_{add_test_str}.snappy')
@@ -71,6 +71,10 @@ def prepare_data(mode, nrows=None, add_test=True, recompute=False):
         use_cols = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters',
                     'reference', 'impressions', 'prices']
         df = df[use_cols]
+        if convert_action_type:
+            logger.info('Converting action_types to int (natural number)')
+            action_type2natural, _ = create_action_type_mapping(recompute=False)
+            df['action_type'] = df['action_type'].map(action_type2natural)
         logger.info('Sort df by session_id, timestamp, step')
         df = df.sort_values(by=['session_id', 'timestamp', 'step']).reset_index(drop=True)
         flogger(df, f'Prepared {mode} data')
@@ -120,7 +124,7 @@ def compute_session_func(grp):
 
     # get successive time difference
     df['last_duration'] = df['timestamp'].diff().dt.total_seconds()
-    # df['last_duration'] = df['last_duration'].fillna(0) # do not fillna with 0 as it would indicate this is first row
+    df['last_duration'] = df['last_duration'].fillna(0)
     df.drop('timestamp', axis=1, inplace=True)
 
     # last reference id in current impression location and its action_type
@@ -132,10 +136,12 @@ def compute_session_func(grp):
     df.drop('action_type', axis=1, inplace=True)
 
     impressions = df['impressions'].dropna().values
+    # in case there is just one row, use list comprehension instead of np concat
     unique_items = list(set([j for i in impressions for j in i] + list(df['reference'].unique())))
+    temp_mapping = {v: k for k, v in enumerate(unique_items)}
 
-    mapping = {v: k for k, v in enumerate(unique_items)}
-    df['reference_natural'] = df['reference'].map(mapping)
+    # 
+    df['reference_natural'] = df['reference'].map(temp_mapping)
     prev_cols = [f'prev_{i}' for i in range(len(unique_items))]
     reference_df = pd.DataFrame(np.eye(len(unique_items), dtype=int)[df['reference_natural'].values],
                                 columns=prev_cols,
@@ -209,6 +215,8 @@ def compute_session_fts(df, mode=None, nprocs=None):
     fts_df.to_parquet(os.path.join(Filepath.cache_path, f'{mode}_session_fts.snappy'))
     logger.info(f'Total time taken to generate fts: {(time.time()-t1)/60:.2f}mins')
     return fts_df
+
+
 def compute_session_fts(df, mode):
     # last_rid = partial(last_reference_id, mode=mode)
     aggs = {'timestamp': [session_duration, dwell_time_prior_clickout],

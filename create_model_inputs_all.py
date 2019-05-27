@@ -19,7 +19,7 @@ def flogger(df, name):
 
 
 def create_action_type_mapping(recompute=False):
-    filepath = Filepath.cache_path
+    filepath = Filepath.nn_cache_path
     filename = os.path.join(filepath, 'action_types_mapping.npy')
 
     if os.path.isfile(filename) and not recompute:
@@ -40,7 +40,7 @@ def create_action_type_mapping(recompute=False):
 
 
 def create_filters_mapping(recompute=False):
-    filename = os.path.join(Filepath.cache_path, 'filters_mapping.npy')
+    filename = os.path.join(Filepath.nn_cache_path, 'filters_mapping.npy')
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load filters mapping from existing: {filename}')
         filters2natural = np.load(filename).item()
@@ -72,7 +72,7 @@ def create_filters_mapping(recompute=False):
 def prepare_data(mode, nrows=None, add_test=True, recompute=False):
     nrows_str = 'all' if nrows is None else nrows
     add_test_str = 'with_test' if add_test else 'no_test'
-    filename = os.path.join(Filepath.cache_path, f'{mode}_{nrows_str}_{add_test_str}.snappy')
+    filename = os.path.join(Filepath.nn_cache_path, f'{mode}_{nrows_str}_{add_test_str}.snappy')
 
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load from existing {filename}')
@@ -206,13 +206,13 @@ def compute_session_fts(df, mode=None, nprocs=None):
     pool.close()
     pool.join()
     fts_df = pd.concat(fts, axis=0)
-    fts_df.to_parquet(os.path.join(Filepath.cache_path, f'{mode}_session_fts.snappy'))
+    fts_df.to_parquet(os.path.join(Filepath.nn_cache_path, f'{mode}_session_fts.snappy'))
     logger.info(f'Total time taken to generate fts: {(time.time()-t1)/60:.2f}mins')
     return fts_df
 
 
 def save_cache(arr, name):
-    filepath = Filepath.cache_path
+    filepath = Filepath.nn_cache_path
     np.save(os.path.join(filepath, name), arr)
 
 
@@ -220,7 +220,7 @@ def create_model_inputs(mode, nrows=100000, add_test=False, recompute=False):
     nrows_ = nrows if nrows is not None else 15932993
     logger.info(f"\n{'='*20}\nCreating {mode.upper()} model inputs with {nrows_:,} rows"
                 f" and recompute={recompute}\n{'='*20}")
-    filename = os.path.join(Filepath.cache_path, f'{mode}_inputs.snappy')
+    filename = os.path.join(Filepath.nn_cache_path, f'{mode}_inputs.snappy')
 
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load from existing {filename}')
@@ -343,7 +343,7 @@ def create_model_inputs(mode, nrows=100000, add_test=False, recompute=False):
         df['at_shift'] = df['at_shift'].map(at_mapping)
 
         logger.debug('Saving session_ids for verification purposes')
-        np.save(os.path.join(Filepath.cache_path, f'{mode}_session_ids.npy'), df['session_id'].values)
+        np.save(os.path.join(Filepath.nn_cache_path, f'{mode}_session_ids.npy'), df['session_id'].values)
 
         drop_cols = ['session_id', 'impressions', 'reference']
 

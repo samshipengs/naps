@@ -35,31 +35,7 @@ class LoggingCallback(Callback):
         self.print_fcn(msg)
 
 
-# def iterate_minibatches(numerics, impressions, prices, cfilters, targets, batch_size, shuffle=True):
-#     # default we will shuffle
-#     indices = np.arange(len(targets))
-#     while True:
-#         if shuffle:
-#             np.random.shuffle(indices)
-#
-#         remainder = len(targets) % batch_size
-#         for start_idx in range(0, len(targets), batch_size):
-#             if remainder != 0 and start_idx + batch_size >= len(targets):
-#                 excerpt = indices[len(targets) - batch_size:len(targets)]
-#             else:
-#                 excerpt = indices[start_idx:start_idx + batch_size]
-#
-#             numerics_batch = numerics[excerpt]
-#             impressions_batch = impressions[excerpt]
-#             prices_batch = prices[excerpt]
-#             cfilters_batch = cfilters[excerpt]
-#             targets_batch = targets[excerpt]
-#
-#             prices_batch = np.array([i.reshape(-1, 1) for i in prices_batch])
-#             yield ([numerics_batch, impressions_batch, prices_batch,
-#                     cfilters_batch], targets_batch)
-
-def iterate_minibatches(numerics, prices, cfilters, targets, batch_size, shuffle=True):
+def iterate_minibatches(impression, history, numeric, price, c_filter, targets, batch_size, shuffle=True):
     # default we will shuffle
     indices = np.arange(len(targets))
     while True:
@@ -73,18 +49,20 @@ def iterate_minibatches(numerics, prices, cfilters, targets, batch_size, shuffle
             else:
                 excerpt = indices[start_idx:start_idx + batch_size]
 
-            numerics_batch = numerics[excerpt]
-            prices_batch = prices[excerpt]
-            cfilters_batch = cfilters[excerpt]
-            targets_batch = targets[excerpt]
+            impression_batch = impression[excerpt]
+            histroy_batch = history[excerpt]
+            numeric_batch = numeric[excerpt]
+            price_batch = price[excerpt]
+            c_filter_batch = c_filter[excerpt]
+            target_batch = targets[excerpt]
 
-            prices_batch = np.array([i.reshape(-1, 1) for i in prices_batch])
-            yield ([numerics_batch, prices_batch,
-                    cfilters_batch], targets_batch)
+            yield ([impression_batch, histroy_batch, numeric_batch, price_batch, c_filter_batch],
+                   target_batch)
 
 
 def train(train_inputs, params, retrain=False):
-    cache_path = Filepath.cache_path
+    # print(train_inputs.keys(), '!'*30)
+    cache_path = Filepath.nn_cache_path
     model_path = Filepath.model_path
 
     # grab some info on n_cfs, this is used to create the filters ohe
@@ -101,19 +79,20 @@ def train(train_inputs, params, retrain=False):
     for fold, (trn_ind, val_ind) in enumerate(skf.split(train_inputs['targets'], train_inputs['targets'])):
         logger.info(f'Training fold {fold}')
         report_fold = {}
-        trn_numerics, val_numerics = train_inputs['numerics'][trn_ind], train_inputs['numerics'][val_ind]
-        # trn_imp, val_imp = train_inputs['impressions'][trn_ind], train_inputs['impressions'][val_ind]
-        trn_price, val_price = train_inputs['prices'][trn_ind], train_inputs['prices'][val_ind]
-        trn_cfilter, val_cfilter = train_inputs['cfilters'][trn_ind], train_inputs['cfilters'][val_ind]
+        trn_imp, val_imp = train_inputs['impression'][trn_ind], train_inputs['impression'][val_ind]
+        trn_hist, val_hist = train_inputs['history'][trn_ind], train_inputs['history'][val_ind]
+        trn_numeric, val_numeric = train_inputs['numeric'][trn_ind], train_inputs['numeric'][val_ind]
+        trn_price, val_price = train_inputs['price'][trn_ind], train_inputs['price'][val_ind]
+        trn_cfilter, val_cfilter = train_inputs['c_filter'][trn_ind], train_inputs['c_filter'][val_ind]
         y_trn, y_val = train_inputs['targets'][trn_ind], train_inputs['targets'][val_ind]
         report_fold['train_len'] = len(y_trn)
         report_fold['val_len'] = len(y_val)
-        # data generator
-        # train_gen = iterate_minibatches(trn_numerics, trn_imp, trn_price, trn_cfilter, y_trn, batch_size, shuffle=True)
-        # val_gen = iterate_minibatches(val_numerics, val_imp, val_price, val_cfilter, y_val, batch_size, shuffle=False)
-        train_gen = iterate_minibatches(trn_numerics, trn_price, trn_cfilter, y_trn, batch_size, shuffle=True)
-        val_gen = iterate_minibatches(val_numerics, val_price, val_cfilter, y_val, batch_size, shuffle=False)
 
+        # data generator
+        train_gen = iterate_minibatches(trn_imp, trn_hist, trn_numeric, trn_price, trn_cfilter, y_trn, batch_size,
+                                        shuffle=True)
+        val_gen = iterate_minibatches(val_imp, val_hist, val_numeric, val_price, val_cfilter, y_val, batch_size,
+                                      shuffle=False)
 
         # =====================================================================================
         # create model
@@ -134,11 +113,13 @@ def train(train_inputs, params, retrain=False):
             # add some callbacks
             callbacks = [ModelCheckpoint(model_filename, monitor='val_loss', save_best_only=True, verbose=1)]
             log_dir = Filepath.tf_logs
-            log_filename = ('{0}-batchsize{1}_epochs{2}_tcn_filter{3}_fsize{4}_ns{5}_ldial{6}_nparams_{7}'
-                            .format(dt.now().strftime('%m-%d-%H-%M'), batch_size, n_epochs,
-                                    params['tcn_params']['nb_filters'], params['tcn_params']['kernel_size'],
-                                    params['tcn_params']['nb_stacks'], params['tcn_params']['dilations'][-1],
-                                    nparams))
+            # log_filename = ('{0}-batchsize{1}_epochs{2}_tcn_filter{3}_fsize{4}_ns{5}_ldial{6}_nparams_{7}'
+            #                 .format(dt.now().strftime('%m-%d-%H-%M'), batch_size, n_epochs,
+            #                         params['tcn_params']['nb_filters'], params['tcn_params']['kernel_size'],
+            #                         params['tcn_params']['nb_stacks'], params['tcn_params']['dilations'][-1],
+            #                         nparams))
+            log_filename = ('{0}-batchsize{1}_epochs{2}_nparams_{3}'
+                            .format(dt.now().strftime('%m-%d-%H-%M'), batch_size, n_epochs, nparams))
             tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True, write_grads=True)
             callbacks.append(tb)
             # simple early stopping
@@ -151,41 +132,27 @@ def train(train_inputs, params, retrain=False):
             log = LoggingCallback(logger.info)
             callbacks.append(log)
 
-            history = model.fit_generator(train_gen,
-                                          steps_per_epoch=len(y_trn) // batch_size,
-                                          epochs=n_epochs,
-                                          verbose=1,
-                                          callbacks=callbacks,
-                                          validation_data=val_gen,
-                                          validation_steps=len(y_val) // batch_size)
-
-        # # make prediction
-        # trn_pred = model.predict(x=[trn_numerics, trn_imp, trn_price[:, :, None], trn_cfilter], batch_size=1024)
-        # trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
-        # plot_hist(trn_pred_label, y_trn, 'train')
-        # confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
-        # trn_mrr = np.mean(1 / (trn_pred_label + 1))
-        #
-        # val_pred = model.predict(x=[val_numerics, val_imp, val_price[:, :, None], val_cfilter], batch_size=1024)
-        # val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
-        # plot_hist(val_pred_label, y_val, 'validation')
-        # confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
-        # val_mrr = np.mean(1 / (val_pred_label + 1))
-        # logger.info(f'train mrr: {trn_mrr:.2f} | val mrr: {val_mrr:.2f}')
+            _ = model.fit_generator(train_gen,
+                                  steps_per_epoch=len(y_trn) // batch_size,
+                                  epochs=n_epochs,
+                                  verbose=1,
+                                  callbacks=callbacks,
+                                  validation_data=val_gen,
+                                  validation_steps=len(y_val) // batch_size)
 
         # make prediction
-        trn_pred = model.predict(x=[trn_numerics, trn_price[:, :, None], trn_cfilter], batch_size=1024)
+        trn_pred = model.predict(x=[trn_imp, trn_hist, trn_numeric, trn_price, trn_cfilter], batch_size=1024)
         trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
         plot_hist(trn_pred_label, y_trn, 'train')
         confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
         trn_mrr = np.mean(1 / (trn_pred_label + 1))
 
-        val_pred = model.predict(x=[val_numerics, val_price[:, :, None], val_cfilter], batch_size=1024)
+        val_pred = model.predict(x=[val_imp, val_hist, val_numeric, val_price, val_cfilter], batch_size=1024)
         val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
         plot_hist(val_pred_label, y_val, 'validation')
         confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
         val_mrr = np.mean(1 / (val_pred_label + 1))
-        logger.info(f'train mrr: {trn_mrr:.2f} | val mrr: {val_mrr:.2f}')
+        logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')
 
         models.append(model)
 
@@ -195,7 +162,7 @@ def train(train_inputs, params, retrain=False):
 
 if __name__ == '__main__':
     setup = {'nrows': 5000000,
-             'recompute_train': False,
+             'recompute_train': True,
              'retrain': True,
              'recompute_test': True}
 
@@ -203,7 +170,37 @@ if __name__ == '__main__':
               'n_epochs': 500,
               'early_stopping': 50,
               'reduce_on_plateau': 30,
-              'tcn_params':
+              'imp_tcn':
+                  {'nb_filters': 8,
+                   'kernel_size': 3,
+                   'nb_stacks': 2,
+                   'padding': 'causal',
+                   'dilations': [1, 2, 4],
+                   'use_skip_connections': True,
+                   'dropout_rate': 0.2,
+                   'return_sequences': False,
+                   'name': 'imp_tcn'},
+              'price_tcn':
+                  {'nb_filters': 16,
+                   'kernel_size': 3,
+                   'nb_stacks': 2,
+                   'padding': 'causal',
+                   'dilations': [1, 2, 4],
+                   'use_skip_connections': True,
+                   'dropout_rate': 0.2,
+                   'return_sequences': False,
+                   'name': 'price_tcn'},
+              'hist_tcn':
+                  {'nb_filters': 16,
+                   'kernel_size': 3,
+                   'nb_stacks': 2,
+                   'padding': 'causal',
+                   'dilations': [1, 2, 4],
+                   'use_skip_connections': True,
+                   'dropout_rate': 0.2,
+                   'return_sequences': False,
+                   'name': 'hist_tcn'},
+              'early_tcn':
                   {'nb_filters': 32,
                    'kernel_size': 3,
                    'nb_stacks': 2,
@@ -212,7 +209,7 @@ if __name__ == '__main__':
                    'use_skip_connections': True,
                    'dropout_rate': 0.2,
                    'return_sequences': False,
-                   'name': 'tcn'},
+                   'name': 'early_tcn'},
               'learning_rate': 0.001,
               }
 

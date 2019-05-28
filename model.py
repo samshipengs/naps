@@ -53,7 +53,7 @@ def build_model(n_cfs, params, act='relu'):
     late_fusion = concatenate([early_fusion_tcn, imp_tcn, price_tcn, hist_tcn,
                                c_filter_dense, numeric_dense])
     late_fusion = BatchNormalization()(late_fusion)
-    late_fusion = Dense(32, activation=act)(late_fusion)
+    late_fusion = Dense(64, activation=act)(late_fusion)
 
     # output layer
     output_layer = Dense(25, activation='softmax')(late_fusion)

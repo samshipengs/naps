@@ -116,8 +116,9 @@ def train(train_inputs, params, retrain=False):
             log_dir = Filepath.tf_logs
             log_filename = ('{0}-batchsize{1}_epochs{2}_nparams_{3}'
                             .format(dt.now().strftime('%m-%d-%H-%M'), batch_size, n_epochs, nparams))
-            tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True,
-                             histogram_freq=5, write_grads=True)
+            # tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True,
+            #                  histogram_freq=5, write_grads=True)
+            tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True)
             callbacks.append(tb)
             # simple early stopping
             es = EarlyStopping(monitor='val_loss', mode='min', patience=params['early_stopping'], verbose=1)
@@ -130,13 +131,13 @@ def train(train_inputs, params, retrain=False):
             callbacks.append(log)
 
             _ = model.fit_generator(train_gen,
-                                  steps_per_epoch=len(y_trn) // batch_size,
-                                  epochs=n_epochs,
-                                  verbose=1,
-                                  callbacks=callbacks,
-                                  # validation_data=val_gen,
-                                  # validation_steps=len(y_val) // batch_size)
-                                  validation_data=([val_imp, val_hist, val_numeric, val_price, val_cfilter], y_val))
+                                    steps_per_epoch=len(y_trn) // batch_size,
+                                    epochs=n_epochs,
+                                    verbose=1,
+                                    callbacks=callbacks,
+                                    # validation_data=val_gen,
+                                    # validation_steps=len(y_val) // batch_size)
+                                    validation_data=([val_imp, val_hist, val_numeric, val_price, val_cfilter], y_val))
 
         # make prediction
         trn_pred = model.predict(x=[trn_imp, trn_hist, trn_numeric, trn_price, trn_cfilter], batch_size=1024)
@@ -166,12 +167,12 @@ if __name__ == '__main__':
 
     params = {'batch_size': 256,
               'n_epochs': 500,
-              'early_stopping': 50,
-              'reduce_on_plateau': 30,
+              'early_stopping': 2000,
+              'reduce_on_plateau': 2000,
               'imp_tcn':
                   {'nb_filters': 8,
                    'kernel_size': 3,
-                   'nb_stacks': 2,
+                   'nb_stacks': 1,
                    'padding': 'causal',
                    'dilations': [1, 2, 4],
                    'use_skip_connections': True,
@@ -181,29 +182,29 @@ if __name__ == '__main__':
               'price_tcn':
                   {'nb_filters': 16,
                    'kernel_size': 3,
-                   'nb_stacks': 2,
+                   'nb_stacks': 1,
                    'padding': 'causal',
-                   'dilations': [1, 2, 4],
+                   'dilations': [1, 2, 4, 8],
                    'use_skip_connections': True,
-                   'dropout_rate': 0.2,
+                   'dropout_rate': 0.1,
                    'return_sequences': False,
                    'name': 'price_tcn'},
               'hist_tcn':
                   {'nb_filters': 16,
                    'kernel_size': 3,
-                   'nb_stacks': 2,
+                   'nb_stacks': 1,
                    'padding': 'causal',
-                   'dilations': [1, 2, 4],
+                   'dilations': [1, 2, 4, 8],
                    'use_skip_connections': True,
-                   'dropout_rate': 0.2,
+                   # 'dropout_rate': 0.2,
                    'return_sequences': False,
                    'name': 'hist_tcn'},
               'early_tcn':
                   {'nb_filters': 32,
                    'kernel_size': 3,
-                   'nb_stacks': 2,
+                   'nb_stacks': 1,
                    'padding': 'causal',
-                   'dilations': [1, 2, 4],
+                   'dilations': [1, 2, 4, 8],
                    'use_skip_connections': True,
                    'dropout_rate': 0.2,
                    'return_sequences': False,

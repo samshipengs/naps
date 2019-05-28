@@ -121,7 +121,7 @@ def prepare_data(mode, nrows=None, convert_action_type=True, add_test=True, reco
             df = load_data(mode)
         flogger(df, f'raw {mode}')
         # pre-process data i.e. dropping duplicates, only take sessions with clicks and clip to last click out
-        df = preprocess_sessions(df, mode=mode, drop_duplicates=True, save=True, recompute=recompute)
+        df = preprocess_sessions(df, mode=mode, nrows=nrows, drop_duplicates=True, save=True, recompute=recompute)
         if mode == 'test':
             # then load the test that we need to submit
             test_sub = load_data('submission_popular')
@@ -161,13 +161,8 @@ def compute_session_func(grp):
     df['last_duration'] = df['last_duration'].fillna(0)
     df.drop('timestamp', axis=1, inplace=True)
 
-    # # last reference id in current impression location and its action_type
-    # df[['last_rid', 'last_at']] = df[['reference', 'action_type']].shift(1)
-
-    # grab only rows with impressions
-    df = df[df['impressions'].notna()].reset_index(drop=True)
     # in case there is just one row, use list comprehension instead of np concat
-    impressions = df['impressions'].values
+    impressions = df['impressions'].dropna().values
     unique_items = list(set([j for i in impressions for j in i] + list(df['reference'].unique())))
     temp_mapping = {v: k for k, v in enumerate(unique_items)}
     df['reference_natural'] = df['reference'].map(temp_mapping)
@@ -184,21 +179,21 @@ def compute_session_func(grp):
                                     columns=prev_interact_cols, index=df[other_mask].index)
     df = pd.concat([df, prev_click_df, prev_interact_df], axis=1)
 
-    # first get last click and all click
-    last_click = df[prev_click_cols]
+    # first get all previous clicks, and others
+    df_temp = df.copy()
+    df_temp.fillna(0, inplace=True) # we need to fillna otherwise the cumsum would not compute on row with nan value
+    prev_click_df = df_temp[prev_click_cols].shift(1).cumsum()
+    prev_interact_df = df_temp[prev_interact_cols].shift(1).cumsum()
+    # del df_temp
+    # gc.collect()
+    # fillna for grabing the last info (cannot ffill in the beginning as it will create extra sum in cumsum)
+    df.fillna(method='ffill', inplace=True)
     # get last one
-    last_click = last_click.shift(1)
-    # get all the past one
-    prev_click_df = last_click.cumsum()
-    df.drop(prev_click_cols, axis=1, inplace=True)
+    last_click = df[prev_click_cols].shift(1)
     # name last ones
     last_click.columns = [f'last_click{i}' for i in range(len(unique_items))]
-
-    # same for interactions
-    last_interact = df[prev_interact_cols]
-    last_interact = last_interact.shift(1)
-    prev_interact_df = last_interact.cumsum()
-    df.drop(prev_interact_cols, axis=1, inplace=True)
+    last_interact = df[prev_interact_cols].shift(1)
+    df.drop(prev_click_cols+prev_interact_cols, axis=1, inplace=True)
     # name last ones
     last_interact.columns = [f'last_interact{i}' for i in range(len(unique_items))]
 
@@ -216,10 +211,14 @@ def compute_session_func(grp):
     iter_cols = {'last_click': last_click.columns, 'prev_click': prev_click_cols,
                  'last_interact': last_interact.columns, 'prev_interact': prev_interact_cols}
     for k, v in iter_cols.items():
-        func = partial(match, cols=v)
-        df[k] = df.apply(func, axis=1)
-        df.drop(v, axis=1, inplace=True)
-
+        try:
+            func = partial(match, cols=v)
+            df[k] = df.apply(func, axis=1)
+            df.drop(v, axis=1, inplace=True)
+        except Exception as err:
+            print('='*10, err)
+            print(df.columns.values)
+            raise Exception(err)
     return df
 
 
@@ -292,11 +291,6 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         # get some numeric and interactions ============================================================================
         logger.info('Compute session features')
         df = compute_session_fts(df, mode)
-        logger.debug(f'\n{df.impressions[0]}\n')
-        logger.debug(f'\n{df.last_click[0]}\n')
-        logger.debug(f'\n{df.prev_click[0]}\n')
-        logger.debug(f'\n{df.last_interact[0]}\n')
-        logger.debug(f'\n{df.prev_interact[0]}\n')
 
         df['impressions'] = df['impressions'].apply(lambda x: [int(i) for i in x])
         df['n_imps'] = df['impressions'].str.len()
@@ -306,8 +300,8 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         for c in cols_to_pad:
             df.loc[padding_mask, c] = (df.loc[padding_mask, c]
                                        .apply(lambda x: np.pad(x, (0, 25 - len(x)), mode='constant')))
-        logger.debug(f'Nans: {df.isna().sum()}')
-        # df.fillna(0, inplace=True)
+        logger.debug(f'Nans:\n{df.isna().sum()}')
+
         # get target
         if mode == 'train':
             logger.info('Assign target')
@@ -335,6 +329,14 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
             test_sub = df[['session_id', 'impressions']]
             test_sub.to_csv(os.path.join(Filepath.sub_path, 'test_sub.csv'), index=False)
             del test_sub
+
+        # Save the session_ids =========================================================================================
+        logger.debug(df.columns)
+        train_ids = df['session_id'].values
+        save_cache(train_ids, f'{mode}_ids.npy')
+        df.drop('session_id', axis=1, inplace=True)
+        del train_ids
+        gc.collect()
 
         hist_cols = ['last_click', 'prev_click', 'last_interact', 'prev_interact']
         history = np.concatenate([np.array(list(df[c].values))[:, :, None] for c in hist_cols], axis=-1)
@@ -435,7 +437,6 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         model_inputs = {filenames[k]: np.load(v) for k, v in enumerate(filepaths)}
 
         logger.info(f'Total {mode} data input creation took: {(time.time()-t_init)/60:.2f} mins')
-    print(model_inputs.keys(), '!'*39)
     return model_inputs
 
 

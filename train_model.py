@@ -66,7 +66,8 @@ def train(train_inputs, params, retrain=False):
     model_path = Filepath.model_path
 
     # grab some info on n_cfs, this is used to create the filters ohe
-    n_cfs = len(np.load(os.path.join(cache_path, 'filters_mapping.npy')).item())
+    # n_cfs = len(np.load(os.path.join(cache_path, 'filters_mapping.npy')).item())
+    n_cfs = 33
     logger.info(f'Number of unique current_filters is: {n_cfs}')
 
     batch_size = params['batch_size']
@@ -113,14 +114,10 @@ def train(train_inputs, params, retrain=False):
             # add some callbacks
             callbacks = [ModelCheckpoint(model_filename, monitor='val_loss', save_best_only=True, verbose=1)]
             log_dir = Filepath.tf_logs
-            # log_filename = ('{0}-batchsize{1}_epochs{2}_tcn_filter{3}_fsize{4}_ns{5}_ldial{6}_nparams_{7}'
-            #                 .format(dt.now().strftime('%m-%d-%H-%M'), batch_size, n_epochs,
-            #                         params['tcn_params']['nb_filters'], params['tcn_params']['kernel_size'],
-            #                         params['tcn_params']['nb_stacks'], params['tcn_params']['dilations'][-1],
-            #                         nparams))
             log_filename = ('{0}-batchsize{1}_epochs{2}_nparams_{3}'
                             .format(dt.now().strftime('%m-%d-%H-%M'), batch_size, n_epochs, nparams))
-            tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True, write_grads=True)
+            tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True,
+                             histogram_freq=5, write_grads=True)
             callbacks.append(tb)
             # simple early stopping
             es = EarlyStopping(monitor='val_loss', mode='min', patience=params['early_stopping'], verbose=1)
@@ -137,8 +134,9 @@ def train(train_inputs, params, retrain=False):
                                   epochs=n_epochs,
                                   verbose=1,
                                   callbacks=callbacks,
-                                  validation_data=val_gen,
-                                  validation_steps=len(y_val) // batch_size)
+                                  # validation_data=val_gen,
+                                  # validation_steps=len(y_val) // batch_size)
+                                  validation_data=([val_imp, val_hist, val_numeric, val_price, val_cfilter], y_val))
 
         # make prediction
         trn_pred = model.predict(x=[trn_imp, trn_hist, trn_numeric, trn_price, trn_cfilter], batch_size=1024)
@@ -162,7 +160,7 @@ def train(train_inputs, params, retrain=False):
 
 if __name__ == '__main__':
     setup = {'nrows': 5000000,
-             'recompute_train': True,
+             'recompute_train': False,
              'retrain': True,
              'recompute_test': True}
 

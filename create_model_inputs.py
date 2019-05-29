@@ -5,6 +5,8 @@ import datetime
 import os
 import gc
 from functools import partial
+import multiprocessing as mp
+from scipy.stats import rankdata
 from utils import load_data, get_logger, get_data_path
 from clean_session import preprocess_sessions
 
@@ -18,7 +20,7 @@ def flogger(df, name):
 
 
 def create_action_type_mapping(recompute=False):
-    filepath = Filepath.gbm_cache_path
+    filepath = Filepath.nn_cache_path
     filename = os.path.join(filepath, 'action_types_mapping.npy')
 
     if os.path.isfile(filename) and not recompute:
@@ -38,164 +40,244 @@ def create_action_type_mapping(recompute=False):
     return action_type2natural, n_unique_actions
 
 
-def prepare_data(mode, convert_action_type=True, nrows=None, select_cols=True, recompute=True):
-    # first load data
-    if mode == 'train':
-        df = load_data(mode, nrows=nrows)
+def meta_encoding(recompute=False):
+    filepath = Filepath.nn_cache_path
+    filename = os.path.join(filepath, 'meta_mapping.npy')
+    if os.path.isfile(filename) and not recompute:
+        logger.info(f'Load from existing file: {filename}')
+        meta_mapping = np.load(filename).item()
+        n_properties = len(meta_mapping[list(meta_mapping.keys())[0]])
     else:
-        df = load_data(mode)
-    flogger(df, f'raw {mode}')
-    # preprocess data i.e. dropping duplicates, only take sessions with clicks and clip to last click out
-    df = preprocess_sessions(df, mode=mode, drop_duplicates=True, save=True, nrows=nrows,
-                             recompute=recompute)
-    if mode == 'test':
-        # then load the test that we need to submit
-        test_sub = load_data('submission_popular')
-        sub_sids = test_sub['session_id'].unique()
-        df = df[df['session_id'].isin(sub_sids)].reset_index(drop=True)
-        flogger(df, 'Load test with only what ids needed for submissions')
+        logger.info('Load meta data')
+        meta_df = load_data('item_metadata')
+        logger.info('Lower and split properties str to list')
+        meta_df['properties'] = meta_df['properties'].str.lower().str.split('|')
+        logger.info('Get all unique properties')
+        unique_properties = list(set(np.concatenate(meta_df['properties'].values)))
+        property2natural = {v: k for k, v in enumerate(unique_properties)}
+        n_properties = len(unique_properties)
+        logger.info(f'Total number of unique meta properties: {n_properties}')
+        logger.info('Convert the properties to ohe and superpose for each item_id')
+        meta_df['properties'] = meta_df['properties'].apply(lambda ps: [property2natural[p] for p in ps])
+        meta_df['properties'] = meta_df['properties'].apply(lambda ps: np.sum(np.eye(n_properties, dtype=np.int16)[ps],
+                                                                              axis=0))
+        logger.info('Create mappings')
+        meta_mapping = dict(meta_df[['item_id', 'properties']].values)
+        # add a mapping (all zeros) for the padded impression ids
+        # meta_mapping[0] = np.zeros(n_properties, dtype=int)
+        logger.info('Saving meta mapping')
+        np.save(filename, meta_mapping)
+    return meta_mapping, n_properties
 
-    # get time and select columns that get used
-    df['timestamp'] = df['timestamp'].apply(lambda ts: datetime.datetime.utcfromtimestamp(ts))
-    if select_cols:
-        usecols = ['user_id', 'session_id', 'timestamp', 'step', 'action_type', 'current_filters',
-                   'reference', 'impressions', 'prices']
-        df = df[usecols]
-    if convert_action_type:
-        logger.info('Converting action_types to int (natural number)')
-        action_type2natural, _ = create_action_type_mapping(recompute=False)
-        df['action_type'] = df['action_type'].map(action_type2natural)
-    logger.info('Sort df by user_id, session_id, timestamp, step')
-    df = df.sort_values(by=['user_id', 'session_id', 'timestamp', 'step']).reset_index(drop=True)
-    flogger(df, f'Prepared {mode} data')
+
+def create_cfs_mapping(select_n_filters=32, recompute=False):
+    filename = os.path.join(Filepath.nn_cache_path, 'filters_mapping.npy')
+    if os.path.isfile(filename) and not recompute:
+        logger.info(f'Load filters mapping from existing: {filename}')
+        filters2natural = np.load(filename).item()
+    else:
+        train = load_data('train', usecols=['current_filters'])
+        test = load_data('test', usecols=['current_filters'])
+        tt = pd.concat([train, test], axis=0, ignore_index=True)
+        del train, test
+        gc.collect()
+        tt['current_filters'] = tt['current_filters'].str.lower()
+        tt['current_filters'] = tt['current_filters'].str.split('|')
+        tt.dropna(subset=['current_filters'], inplace=True)
+        cfs = np.concatenate(tt['current_filters'].values)
+        cfs_ctn = pd.value_counts(cfs, normalize=True) * 100
+        # choose the top 32
+        selected_filters = cfs_ctn.index[:select_n_filters].values
+        rest_filters = cfs_ctn.index[select_n_filters:].values
+        logger.info(f'select filters:\n{selected_filters} which covers {cfs_ctn.cumsum().iloc[select_n_filters-1]:.2f}%'
+                    ' of all not nan current_filters')
+
+        filters2natural = {v: k for k, v in enumerate(selected_filters)}
+        # fit the rest to one mapping
+        for f in rest_filters:
+            filters2natural[f] = len(selected_filters)
+        np.save(filename, filters2natural)
+    return filters2natural, select_n_filters+1
+
+
+def prepare_data(mode, nrows=None, convert_action_type=True, add_test=True, recompute=False):
+    nrows_str = 'all' if nrows is None else nrows
+    add_test_str = 'with_test' if add_test else 'no_test'
+    filename = os.path.join(Filepath.nn_cache_path, f'{mode}_{nrows_str}_{add_test_str}.snappy')
+
+    if os.path.isfile(filename) and not recompute:
+        logger.info(f'Load from existing {filename}')
+        df = pd.read_parquet(filename)
+    else:
+        # first load data
+        if mode == 'train':
+            df = load_data(mode, nrows=nrows)
+            if add_test:
+                logger.info('Add available test data')
+                df_test = load_data('test', nrows=nrows)
+                df = pd.concat([df, df_test], axis=0, ignore_index=True)
+        else:
+            df = load_data(mode)
+        flogger(df, f'raw {mode}')
+        # pre-process data i.e. dropping duplicates, only take sessions with clicks and clip to last click out
+        df = preprocess_sessions(df, mode=mode, nrows=nrows, drop_duplicates=True, save=True, recompute=recompute)
+        if mode == 'test':
+            # then load the test that we need to submit
+            test_sub = load_data('submission_popular')
+            sub_sids = test_sub['session_id'].unique()
+            df = df[df['session_id'].isin(sub_sids)].reset_index(drop=True)
+            flogger(df, 'Load test with only what ids needed for submissions')
+
+        # get time and select columns that get used
+        df['timestamp'] = df['timestamp'].apply(lambda ts: datetime.datetime.utcfromtimestamp(ts))
+        # use_cols = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters',
+        #             'reference', 'impressions', 'prices']
+        use_cols = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters',
+                    'reference', 'impressions', 'prices']
+        df = df[use_cols]
+        if convert_action_type:
+            logger.info('Converting action_types to int (natural number)')
+            action_type2natural, _ = create_action_type_mapping(recompute=False)
+            df['action_type'] = df['action_type'].map(action_type2natural)
+        logger.info('Sort df by session_id, timestamp, step')
+        df = df.sort_values(by=['session_id', 'timestamp', 'step']).reset_index(drop=True)
+        df.drop('step', axis=1, inplace=True)
+        flogger(df, f'Prepared {mode} data')
+        df.to_parquet(filename)
     return df
 
 
-# create some session features
-def session_duration(ts):
-    if len(ts) == 1:
-        return np.nan
-    else:
-        return (ts.max() - ts.min()).total_seconds()
+def compute_session_func(grp):
+    df = grp.copy()
+    # number of records in session
+    df['session_size'] = list(range(1, len(df)+1))
+
+    # session_time duration (subtract the min)
+    df['session_duration'] = (df['timestamp'] - df['timestamp'].min()).dt.total_seconds()
+
+    # get successive time difference
+    df['last_duration'] = df['timestamp'].diff().dt.total_seconds()
+    df['last_duration'] = df['last_duration'].fillna(0)
+    df.drop('timestamp', axis=1, inplace=True)
+
+    # in case there is just one row, use list comprehension instead of np concat
+    impressions = df['impressions'].dropna().values
+    unique_items = list(set([j for i in impressions for j in i] + list(df['reference'].unique())))
+    temp_mapping = {v: k for k, v in enumerate(unique_items)}
+    df['reference_natural'] = df['reference'].map(temp_mapping)
+    click_out_mask = df['action_type'] == 0
+    df.drop('action_type', axis=1, inplace=True)
+    other_mask = ~click_out_mask
+    prev_click_cols = [f'prev_click{i}' for i in range(len(unique_items))]
+    prev_interact_cols = [f'prev_interact{i}' for i in range(len(unique_items))]
+
+    prev_click_df = pd.DataFrame(np.eye(len(unique_items), dtype=int)[df[click_out_mask]['reference_natural'].values],
+                                 columns=prev_click_cols, index=df[click_out_mask].index)
+
+    prev_interact_df = pd.DataFrame(np.eye(len(unique_items), dtype=int)[df[other_mask]['reference_natural'].values],
+                                    columns=prev_interact_cols, index=df[other_mask].index)
+    df = pd.concat([df, prev_click_df, prev_interact_df], axis=1)
+
+    # first get all previous clicks, and others
+    df_temp = df.copy()
+    df_temp.fillna(0, inplace=True) # we need to fillna otherwise the cumsum would not compute on row with nan value
+    prev_click_df = df_temp[prev_click_cols].shift(1).cumsum()
+    prev_interact_df = df_temp[prev_interact_cols].shift(1).cumsum()
+    # del df_temp
+    # gc.collect()
+    # fillna for grabing the last info (cannot ffill in the beginning as it will create extra sum in cumsum)
+    df.fillna(method='ffill', inplace=True)
+    # get last one
+    last_click = df[prev_click_cols].shift(1)
+    # name last ones
+    last_click.columns = [f'last_click{i}' for i in range(len(unique_items))]
+    last_interact = df[prev_interact_cols].shift(1)
+    df.drop(prev_click_cols+prev_interact_cols, axis=1, inplace=True)
+    # name last ones
+    last_interact.columns = [f'last_interact{i}' for i in range(len(unique_items))]
+
+    # concat all
+    df = pd.concat([df, last_click, prev_click_df, last_interact, prev_interact_df], axis=1)
+    # only need click-out rows now
+    df = df[click_out_mask].reset_index(drop=True)
+    df.fillna(0, inplace=True)
+
+    # now actually match the corresponding ones
+    def match(row, cols):
+        impressions_natural = [temp_mapping[imp] for imp in row['impressions']]
+        return row[cols].values[impressions_natural]
+
+    iter_cols = {'last_click': last_click.columns, 'prev_click': prev_click_cols,
+                 'last_interact': last_interact.columns, 'prev_interact': prev_interact_cols}
+    for k, v in iter_cols.items():
+        try:
+            func = partial(match, cols=v)
+            df[k] = df.apply(func, axis=1)
+            df.drop(v, axis=1, inplace=True)
+        except Exception as err:
+            print('='*10, err)
+            print(df.columns.values)
+            raise Exception(err)
+    return df
 
 
-def dwell_time_prior_clickout(ts):
-    if len(ts) == 1:
-        return np.nan
-    else:
-        ts_sorted = ts.sort_values()
-        return (ts_sorted.iloc[-1] - ts_sorted.iloc[-2]).total_seconds()
+def compute_session(args):
+    # grab the args
+    gids, df = args
+    # selecting the assigned session ids and grouping on session level
+    grps = (df[df['session_id'].isin(gids)]
+            .reset_index(drop=True)
+            .groupby('session_id'))
+
+    # use apply to compute session level features
+    features = grps.apply(compute_session_func).reset_index(drop=True)
+    return features
 
 
-def last_reference_id(grp, mode):
-    mask = grp['reference'].notna()
-    if mode == 'train':
-        n = 1
-        last_ref_loc = -2
-    elif mode == 'test':
-        n = 0
-        last_ref_loc = -1
-    else:
-        raise ValueError(f'Invalid mode: {mode}')
-    if mask.sum() <= n:
-        return np.nan
-    else:
-        # the second last reference id i.e. the one before click out and the associated action_type
-        return grp[mask]['action_type'].iloc[last_ref_loc], grp[mask]['reference'].iloc[last_ref_loc]
+def compute_session_fts(df, mode=None, nprocs=None):
+    t1 = time.time()
+    if nprocs is None:
+        nprocs = mp.cpu_count() - 1
+        logger.info('Using {} cores'.format(nprocs))
 
+    sids = df['session_id'].unique()
 
-def compute_session_fts(df, mode):
-    aggs = {'timestamp': [session_duration, dwell_time_prior_clickout],
-            'session_id': 'size'}
+    fts = []
 
-    session_grp = df[['session_id', 'timestamp']].groupby('session_id')
-    session_fts = session_grp.agg(aggs)
-    session_fts.columns = ['_'.join(col).strip() for col in session_fts.columns.values]
-    logger.info(f'Session features generated: {list(session_fts.columns)}')
-    session_fts.reset_index(inplace=True)
-
-    # add last_reference_id and its action_type
-    last_rid = partial(last_reference_id, mode=mode)
-    session_grp = df[['session_id', 'action_type', 'reference']].groupby('session_id')
-    action_id_pair = session_grp.apply(last_rid).reset_index(name='action_id_pair')
-
-    df = pd.merge(df, action_id_pair, on='session_id', how='left')
-    return pd.merge(df, session_fts, on='session_id')
-
-
-def click_view_encoding(sids, fold, m=100, nrows=None, recompute=False):
-    """
-    encode click and view
-    :param m: smoothing factor
-    :param nrows: load number of rows data
-    :param recompute:
-    :return:
-    """
-    filepath = Filepath.gbm_cache_path
-    filename = os.path.join(filepath, f'fold{fold}_clickview_encodings.csv')
-    if os.path.isfile(filename) and not recompute:
-        logger.info(f'Load from existing file: {filename}')
-        encoding = pd.read_csv(filename)
-        cv_encoding = dict(encoding[['item_id', 'clicked']].values)
-    else:
-        logger.info('Calculating the click/view ratio encodings for each item_id')
-        # only load reference and action_type
-        ref_imp = load_data('train', nrows=nrows, usecols=['session_id', 'action_type', 'reference', 'impressions'])
-        if sids is not None:
-            # only select the data whose session_ids are given in sids
-            ref_imp = ref_imp[ref_imp['session_id'].isin(sids)].reset_index(drop=True)
-        ref_imp.drop('session_id', axis=1, inplace=True)
-        # only get the row that is click-out action
-        ref_imp = ref_imp.loc[ref_imp.action_type == 'clickout item'].reset_index(drop=True)
-        ref_imp.drop('action_type', axis=1, inplace=True)
-        # make sure impressions are not nan
-        ref_imp = ref_imp[ref_imp['impressions'].notna()].reset_index(drop=True)
-        # do not encode reference that is not int
-        ref_imp = ref_imp[~ref_imp['reference'].str.contains('[a-zA-Z]')].reset_index(drop=True)
-
-        # create list of impressions
-        ref_imp['impressions'] = ref_imp['impressions'].str.split('|')
-        # remove the clicked id from impressions
-        ref_imp['impressions'] = ref_imp.apply(lambda row: list(set(row['impressions']) - set(row['reference'])),
-                                               axis=1)
-
-        # create 0 for impressions (viewed) and 1 for clicked
-        # imps = ref_imp['impressions'].values
-        # imps = [j for i in imps for j in i]
-        imps = np.concatenate(ref_imp['impressions'].values)
-        click_imp = pd.concat([pd.Series([0] * len(imps), index=imps),
-                               pd.Series([1] * len(ref_imp), index=ref_imp['reference'].values)])
-        click_imp.index.name = 'item_id'
-        click_imp = pd.DataFrame(click_imp, columns=['clicked']).reset_index()
-
-        # smoothed encoding
-        mu = click_imp['clicked'].mean()
-        agg = click_imp.groupby('item_id')['clicked'].agg(['count', 'mean'])
-        count = agg['count']
-        mus = agg['mean']
-        smoothed = (count * mus + m * mu) / (count + m)
-        # click_imp['clicked'] = click_imp['item_id'].map(smoothed)
-        encoding = smoothed.reset_index(name='clicked')
-        encoding['item_id'] = encoding['item_id'].astype(int)
-
-        # return just the dict for mapping
-        cv_encoding = dict(encoding[['item_id', 'clicked']].values)
-
-        # save
-        encoding.to_csv(filename, index=False)
-    return cv_encoding
+    # create iterator to pass in args
+    def args_gen():
+        for i in range(nprocs):
+            yield (sids[range(i, len(sids), nprocs)], df)
+    # init multiprocessing pool
+    pool = mp.Pool(nprocs)
+    for ft in pool.map(compute_session, args_gen()):
+        fts.append(ft)
+    pool.close()
+    pool.join()
+    fts_df = pd.concat(fts, axis=0)
+    # fts_df.to_parquet(os.path.join(Filepath.nn_cache_path, f'{mode}_session_fts.snappy'))
+    logger.info(f'\n{fts_df.head()}\n{fts_df.columns}')
+    logger.info(f'Total time taken to generate fts: {(time.time()-t1)/60:.2f} mins')
+    return fts_df
 
 
 def save_cache(arr, name):
-    filepath = Filepath.gbm_cache_path
+    filepath = Filepath.nn_cache_path
     np.save(os.path.join(filepath, name), arr)
 
 
-def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=False):
+def expand(df, col):
+    n_cols = len(df[col].iloc[0])
+    expand_cols = [f'{col}_{i}' for i in range(n_cols)]
+    df[expand_cols] = pd.DataFrame(df[col].values.tolist(), index=df.index)
+    df.drop(col, axis=1, inplace=True)
+    return df
+
+
+def create_model_inputs(mode, nrows=100000, recompute=False):
     nrows_ = nrows if nrows is not None else 15932993
     logger.info(f"\n{'='*10} Creating {mode.upper()} model inputs with {nrows_:,} rows and recompute={recompute} {'='*10}")
-    cv = 'with_imp' if add_cv_encoding else 'no_imp'
-    filename = os.path.join(Filepath.gbm_cache_path, f'{mode}_inputs_{cv}.snappy')
+    filename = os.path.join(Filepath.gbm_cache_path, f'{mode}_inputs_{nrows}.snappy')
 
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load from existing {filename}')
@@ -203,82 +285,26 @@ def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=Fal
     else:
         logger.info(f'Prepare {mode} data')
         t_init = time.time()
-        df = prepare_data(mode, convert_action_type=True, nrows=nrows, recompute=False)
+        df = prepare_data(mode, nrows=nrows, add_test=False, recompute=False)
+        # ==============================================================================================================
+        # process impressions
+        df['impressions'] = df['impressions'].str.split('|')
+
+        # get some numeric and interactions ============================================================================
         logger.info('Compute session features')
         df = compute_session_fts(df, mode)
 
-        logger.info('Only select last click-out from each session')
-        df = df.groupby('session_id').last().reset_index()
-        flogger(df, 'df shape after only selecting last click-out row each session')
-
-        # log-transform on session_size feature
-        logger.info('Log-transform on session_size feature')
-        df['session_id_size'] = np.log(df['session_id_size'])
-
-        # log1p-transform on timestamp_dwell_time_prior_clickout but will cliping upper to 1hr
-        logger.info('Also log-transform on timestamp_dwell_time_prior_clickout but will cliping upper to 1hr')
-        df['timestamp_dwell_time_prior_clickout'] = np.log1p(df['timestamp_dwell_time_prior_clickout'].clip(upper=60 ** 2))
-
-        if mode == 'test':
-            # for testing submission, keep records of the sessions_ids and impressions (still a str)
-            test_sub = df[['session_id', 'impressions']]
-            test_sub.to_csv(os.path.join(Filepath.sub_path, 'test_sub.csv'), index=False)
-            del test_sub
-
-        # number of current filters
-        df['nf'] = df['current_filters'].str.split('|').str.len()
-        df.drop('current_filters', axis=1, inplace=True)
-
-        logger.info('Split prices str to list and convert to int')
-        df['prices'] = df['prices'].str.split('|')
-        df['prices'] = df['prices'].apply(lambda x: [float(p) for p in x])
-
-        # def _rank_price(prices_row):
-        #     ps = np.array(prices_row)
-        #     sort_index = ps.argsort()
-        #     ranks = np.empty_like(sort_index)
-        #     n_prices = len(ps)
-        #     # get the rank (start from 1) percentage
-        #     ranks[sort_index] = (np.arange(n_prices) + 1) / n_prices
-        #     return ranks
-        # # add price rank
-        # df['prices_rank'] = df['prices'].apply(_rank_price)
-
-        logger.info('Pad 0s for prices length shorter than 25')
-        df['time_steps'] = df['prices'].str.len()
-        padding_mask = df['time_steps'] < 25
-        df.drop('time_steps', axis=1, inplace=True)
-        df.loc[padding_mask, 'prices'] = df.loc[padding_mask, 'prices'].apply(lambda x: np.pad(x, (0, 25-len(x)),
-                                                                                               mode='constant',
-                                                                                               constant_values=np.nan))
-        # df.loc[padding_mask, 'prices_rank'] = (df
-        #                                        .loc[padding_mask, 'prices_rank']
-        #                                        .apply(lambda x: np.pad(x, (0, 25-len(x)),
-        #                                                                mode='constant',
-        #                                                                constant_values=np.nan)))
-        # df[[f'pr_{i}' for i in range(25)]] = pd.DataFrame(df['prices_rank'].values.tolist(),
-        #                                                   index=df.index)
-        # df.drop('prices_rank', axis=1, inplace=True)
-        logger.info('Normalizing price')
-
-        # maybe normalize to percentage within each records, check does each item_id have the same price
-        # over all records
-        def normalize(ps):
-            p_arr = np.array(ps)
-            return p_arr / (p_arr.max())
-        df['prices_percentage'] = df['prices'].apply(normalize)
-        df[[f'price_{i}' for i in range(25)]] = pd.DataFrame(df['prices_percentage'].values.tolist(), index=df.index)
-        df.drop(['prices', 'prices_percentage'], axis=1, inplace=True)
-
-        logger.info('Split impression str to list of impressions')
-        df['impressions'] = df['impressions'].str.split('|')
-        df['n_imps'] = df['impressions'].str.len()
-        logger.info('Convert impression str to int')
         df['impressions'] = df['impressions'].apply(lambda x: [int(i) for i in x])
-        logger.info('Pad 0s for impressions length shorter than 25')
-        df.loc[padding_mask, 'impressions'] = (df.loc[padding_mask, 'impressions']
-                                                 .apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant')))
+        df['n_imps'] = df['impressions'].str.len()
+        padding_mask = df['n_imps'] < 25
+        # pad zeros
+        cols_to_pad = ['impressions', 'last_click', 'prev_click', 'last_interact', 'prev_interact']
+        for c in cols_to_pad:
+            df.loc[padding_mask, c] = (df.loc[padding_mask, c]
+                                       .apply(lambda x: np.pad(x, (0, 25 - len(x)), mode='constant')))
+        logger.debug(f'Nans:\n{df.isna().sum()}')
 
+        # get target
         if mode == 'train':
             logger.info('Assign target')
             logger.info('Convert reference id to int')
@@ -300,56 +326,94 @@ def create_model_inputs(mode, nrows=100000, add_cv_encoding=False, recompute=Fal
             df = df[df['target'].notna()].reset_index(drop=True)
             df['target'] = df['target'].astype(int)
             logger.info(f"Target distribution: \n{pd.value_counts(df['target']).head()}")
+        if mode == 'test':
+            # for testing submission, keep records of the sessions_ids and impressions (still a str)
+            test_sub = df[['session_id', 'impressions']]
+            test_sub.to_csv(os.path.join(Filepath.sub_path, 'test_sub.csv'), index=False)
+            del test_sub
 
-        logger.info('Assign location of previous reference id')
+        # Save the session_ids =========================================================================================
+        logger.debug(df.columns)
+        train_ids = df['session_id'].values
+        save_cache(train_ids, f'{mode}_ids.npy')
+        df.drop('session_id', axis=1, inplace=True)
+        del train_ids
+        gc.collect()
 
-        def assign_last_ref_id(row, divide=True):
-            action_id_pair = row['action_id_pair']
-            if pd.isna(action_id_pair):
-                return [np.nan]*2
+        # hist_cols = ['last_click', 'prev_click', 'last_interact', 'prev_interact']
+        # history = np.concatenate([np.array(list(df[c].values))[:, :, None] for c in hist_cols], axis=-1)
+        # df.drop(hist_cols, axis=1, inplace=True)
+        # save_cache(history, f'{mode}_history.npy')
+        # del history
+        # gc.collect()
 
-            # although reference_id got converted to int, but the reference_last_reference_id was calculated
-            # when it was still str value, so here we look up the index in str of impressions
-            else:
-                imp = [str(i) for i in row['impressions']]
-                action_type, ref = action_id_pair
-                if ref in imp:
-                    if divide:
-                        pos = (imp.index(ref) + 1) / len(imp)
-                    else:
-                        pos = imp.index(ref) + 1
-                    return [pos, action_type]  # ! this may need to get chnaged
-                else:
-                    return [np.nan, action_type]
+        # First get price info =========================================================================================
+        logger.info('Split prices str to list and convert to int')
+        # click_mask = df['action_type'] == 0
+        df['prices'] = df['prices'].str.split('|')
+        df['prices'] = df['prices'].apply(lambda x: [float(p) for p in x])
+        logger.info('Add price rank')
 
-        logger.info('Divide last_ref_id by 25')
-        assign_last_ref_id_func = partial(assign_last_ref_id, divide=True)
-        df['last_ref_ind'] = df.apply(assign_last_ref_id_func, axis=1)
-        df[['pos', 'at']] = pd.DataFrame(df['last_ref_ind'].values.tolist(), index=df.index)
+        def _rank_price(prices_row):
+            ranks = rankdata(prices_row, method='dense')
+            return ranks / (ranks.max())
 
-        logger.debug('Saving session_ids for verification purposes')
-        np.save(os.path.join(Filepath.gbm_cache_path, f'{mode}_session_ids.npy'), df['session_id'].values)
+        # add price rank
+        df['prices_rank'] = df['prices'].apply(_rank_price)
+        logger.info('Pad 0s for prices length shorter than 25')
+        padding_mask = df['prices'].str.len() < 25
+        df.loc[padding_mask, 'prices'] = df.loc[padding_mask, 'prices'].apply(lambda x: np.pad(x, (0, 25 - len(x)),
+                                                                                               mode='constant'))
+        df.loc[padding_mask, 'prices_rank'] = (df.loc[padding_mask, 'prices_rank']
+                                                 .apply(lambda x: np.pad(x, (0, 25-len(x)),
+                                                                         mode='constant', constant_values=np.nan)))
 
-        if add_cv_encoding:
-            imp_cols = [f'imp_{i}' for i in range(25)]
-            # break the list into columns
-            df[imp_cols] = pd.DataFrame(df['impressions'].values.tolist(), index=df.index)
-            drop_cols = ['user_id', 'impressions', 'timestamp', 'action_type', 'reference', 'action_id_pair',
-                         'last_ref_ind']
-        else:
-            drop_cols = ['session_id', 'user_id', 'impressions', 'timestamp', 'action_type', 
-                         'reference', 'action_id_pair', 'last_ref_ind']
-        logger.info(f'Drop columns: {drop_cols}')
+        # current_filters ==============================================================================================
+        logger.info('Lower case current filters and split to list')
+        df['current_filters'] = df['current_filters'].str.lower().str.split('|')
+        cfs2natural, n_cfs = create_cfs_mapping()
+        logger.info(f'There are total {n_cfs} unique filters')
+
+        logger.info('Apply ohe superposition of filters to each records')
+        df.loc[df['current_filters'].notna(), 'current_filters'] = (df.loc[df['current_filters'].notna(),
+                                                                           'current_filters']
+                                                                    .apply(lambda cfs: [cfs2natural[cf] for cf in cfs]))
+        del cfs2natural
+        gc.collect()
+        # zeros if the cfs is nan (checked with type(cfs) is list not float
+        df['current_filters'] = (df['current_filters'].apply(lambda cfs: np.sum(np.eye(n_cfs, dtype=np.int16)[cfs],
+                                                                                axis=0)
+                                                             if type(cfs) == list
+                                                             else np.zeros(n_cfs, dtype=np.int16)))
+        #
+        # if mode == 'train':
+        #     logger.info('Getting targets')
+        #     # TARGETS
+        #     targets = df['target'].values
+        #     df.drop('target', axis=1, inplace=True)
+        #     save_cache(targets, 'train_targets.npy')
+        #     del targets
+        #     gc.collect()
+
+        # drop not needed columns
+        drop_cols = ['impressions', 'reference']
         df.drop(drop_cols, axis=1, inplace=True)
-        logger.info(f'Generated {mode}_inputs columns:\n{df.columns}')
-        logger.info(f'Total {mode} data input creation took: {(time.time()-t_init)/60:.2f} mins')
+        # finally expand all column of list to columns
+        expand_cols = ['prices', 'prices_rank', 'last_click', 'prev_click', 'last_interact', 'prev_interact',
+                       'current_filters']
+        for col in expand_cols:
+            logger.info(f'Expanding on {col}')
+            df = expand(df, col)
+
         df.to_parquet(filename)
+
+        logger.info(f'Total {mode} data input creation took: {(time.time()-t_init)/60:.2f} mins')
     return df
 
 
 if __name__ == '__main__':
     args = {'mode': 'train',
-            'nrows': 1000000,
+            'nrows': 100000,
             'recompute': True}
     logger.info(f'Creating data input: {args}')
     _ = create_model_inputs(**args)

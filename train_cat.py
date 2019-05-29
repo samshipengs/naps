@@ -7,7 +7,7 @@ from datetime import datetime as dt
 from sklearn.model_selection import StratifiedKFold
 import catboost as cat
 
-from create_model_inputs import create_model_inputs, click_view_encoding
+from create_model_inputs import create_model_inputs
 from utils import get_logger, get_data_path, check_gpu
 from plots import plot_hist, confusion_matrix, plot_imp_cat
 
@@ -16,15 +16,8 @@ logger = get_logger('train_model')
 Filepath = get_data_path()
 
 
-def cv_encode(df, mapping):
-    # df[imp_cols] = pd.DataFrame(df['impressions'].values.tolist(), index=df.index)
-    imp_cols = [f'imp_{i}' for i in range(25)]
-    for c in imp_cols:
-        df[c] = df[c].map(mapping)
-
-
-def train(train_inputs, params, add_cv_encoding=False, retrain=False):
-    cache_path = Filepath.cache_path
+def train(train_inputs, params, retrain=False):
+    # cache_path = Filepath.gbm_cache_path
     model_path = Filepath.model_path
 
     targets = train_inputs['target']
@@ -37,19 +30,6 @@ def train(train_inputs, params, add_cv_encoding=False, retrain=False):
         logger.info(f'Training fold {fold}: train len={len(trn_ind):,} | val len={len(val_ind):,}')
         x_trn, x_val = train_inputs.iloc[trn_ind].reset_index(drop=True), train_inputs.iloc[val_ind].reset_index(drop=True)
         y_trn, y_val = targets.iloc[trn_ind], targets.iloc[val_ind]
-        # cv encoding
-        if add_cv_encoding:
-            sids_trn = x_trn['session_id'].unique()
-            logger.info('Add click-view/impression encodings')
-            cv_encoding = click_view_encoding(sids_trn, fold, m=500, nrows=None, recompute=False)
-            # cv_encoding = dict(cv_encoding[['item_id', 'clicked']].values)
-            # imp_cols = [f'imp_{i}' for i in range(25)]
-            
-            cv_encode(x_trn, cv_encoding)
-            cv_encode(x_val, cv_encoding)
-            x_trn.drop('session_id', axis=1, inplace=True)
-            x_val.drop('session_id', axis=1, inplace=True)
-
         
         # =====================================================================================
         # create model
@@ -139,9 +119,6 @@ if __name__ == '__main__':
     for c, clf in enumerate(models):
         test_sub_m = test_sub.copy()
         logger.info(f'Generating predictions from model {c}')
-        if setup['add_cv_encoding']:
-            cv_encoding = click_view_encoding(sids=None, fold=c, m=100, nrows=None, recompute=True)
-            cv_encode(test_inputs, cv_encoding)
         test_pred = clf.predict_proba(test_inputs)
         test_predictions.append(test_pred)
 

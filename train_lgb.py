@@ -7,7 +7,7 @@ from datetime import datetime as dt
 from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 import lightgbm as lgb
 
-from create_model_inputs import create_model_inputs, click_view_encoding
+from create_model_inputs import create_model_inputs
 from utils import get_logger, get_data_path, ignore_warnings
 from plots import plot_hist, confusion_matrix, plot_imp_lgb
 
@@ -17,27 +17,12 @@ logger = get_logger('train_lgb')
 Filepath = get_data_path()
 
 
-def cv_encode(df, mapping):
-    imp_cols = [f'imp_{i}' for i in range(25)]
-    for c in imp_cols:
-        df[c] = df[c].map(mapping)
-
-
-# def compute_mrr_lgb(y_pred_flat, dtrain):
-#     y_pred = y_pred_flat.reshape(-1, 25)
-#     y_true = dtrain.get_label()
-#     # print(y_pred.shape, y_true.shape)
-#     pred_label = np.where(np.argsort(y_pred)[:, ::-1] == y_true.values.reshape(-1, 1))[1]
-#     mrr = np.mean(1 / (pred_label + 1))
-#     return 'mrr', mrr, True
-
-
 def compute_mrr(y_pred, y_true):
     pred_label = np.where(np.argsort(y_pred)[:, ::-1] == y_true.values.reshape(-1, 1))[1]
     return np.mean(1 / (pred_label + 1))
 
 
-def train(train_inputs, params, add_cv_encoding=False, retrain=False, continue_train=False):
+def train(train_inputs, params, retrain=False, continue_train=False):
     cache_path = Filepath.gbm_cache_path
     model_path = Filepath.model_path
 
@@ -54,16 +39,7 @@ def train(train_inputs, params, add_cv_encoding=False, retrain=False, continue_t
         x_trn, x_val = train_inputs.iloc[trn_ind].reset_index(drop=True), train_inputs.iloc[val_ind].reset_index(
             drop=True)
         y_trn, y_val = targets.iloc[trn_ind], targets.iloc[val_ind]
-        # cv encoding
-        if add_cv_encoding:
-            sids_trn = x_trn['session_id'].unique()
-            logger.info('Add click-view/impression encodings')
-            cv_encoding = click_view_encoding(sids_trn, fold, m=100, nrows=None, recompute=False)
 
-            cv_encode(x_trn, cv_encoding)
-            cv_encode(x_val, cv_encoding)
-            x_trn.drop('session_id', axis=1, inplace=True)
-            x_val.drop('session_id', axis=1, inplace=True)
         lgb_trn_data = lgb.Dataset(x_trn, label=y_trn, free_raw_data=False)
         lgb_val_data = lgb.Dataset(x_val, label=y_val, free_raw_data=False)
 
@@ -123,16 +99,15 @@ def train(train_inputs, params, add_cv_encoding=False, retrain=False, continue_t
 
 if __name__ == '__main__':
     setup = {'nrows': None,
-             'add_cv_encoding': False,
-             'recompute_train': False,
+             'recompute_train': True,
              'retrain': True,
-             'continue_train': True,
+             'continue_train': False,
              'recompute_test': False}
 
     params = {'boosting': 'gbdt',  # gbdt, dart, goss
-              'max_depth': 5,
-              'num_leaves': 6,
-              'feature_fraction': 0.9,
+              'max_depth': -1,
+              'num_leaves': 12,
+              'feature_fraction': 0.8,
               'num_boost_round': 3000,
               'early_stopping_rounds': 100,
               'learning_rate': 0.01,
@@ -150,14 +125,12 @@ if __name__ == '__main__':
     logger.info(f"\nParams\n{'=' * 20}\n{params}\n{'=' * 20}")
 
     # first create training inputs
-    train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], add_cv_encoding=setup['add_cv_encoding'],
-                                       recompute=setup['recompute_train'])
+    train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], recompute=setup['recompute_train'])
     # train the model
-    models = train(train_inputs, params=params, add_cv_encoding=setup['add_cv_encoding'], retrain=setup['retrain'],
+    models = train(train_inputs, params=params, retrain=setup['retrain'],
                    continue_train=setup['continue_train'])
     # get the test inputs
-    test_inputs = create_model_inputs(mode='test', nrows=setup['nrows'], add_cv_encoding=setup['add_cv_encoding'],
-                                      recompute=setup['recompute_test'])
+    test_inputs = create_model_inputs(mode='test', nrows=setup['nrows'], recompute=setup['recompute_test'])
     # make predictions on test
     logger.info('Load test sub csv')
     test_sub = pd.read_csv(os.path.join(Filepath.sub_path, 'test_sub.csv'))
@@ -173,9 +146,6 @@ if __name__ == '__main__':
     for c, clf in enumerate(models):
         test_sub_m = test_sub.copy()
         logger.info(f'Generating predictions from model {c}')
-        if setup['add_cv_encoding']:
-            cv_encoding = click_view_encoding(sids=None, fold=c, m=5, nrows=None, recompute=False)
-            cv_encode(test_inputs, cv_encoding)
         test_pred = clf.predict(test_inputs)
         test_predictions.append(test_pred)
 

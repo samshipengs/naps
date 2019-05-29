@@ -116,9 +116,9 @@ def train(train_inputs, params, retrain=False):
             log_dir = Filepath.tf_logs
             log_filename = ('{0}-batchsize{1}_epochs{2}_nparams_{3}'
                             .format(dt.now().strftime('%m-%d-%H-%M'), batch_size, n_epochs, nparams))
-            # tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True,
-            #                  histogram_freq=5, write_grads=True)
-            tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True)
+            tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True,
+                             histogram_freq=20, write_grads=True)
+            # tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True)
             callbacks.append(tb)
             # simple early stopping
             es = EarlyStopping(monitor='val_loss', mode='min', patience=params['early_stopping'], verbose=1)
@@ -172,7 +172,7 @@ if __name__ == '__main__':
               'imp_tcn':
                   {'nb_filters': 8,
                    'kernel_size': 3,
-                   'nb_stacks': 1,
+                   'nb_stacks': 2,
                    'padding': 'causal',
                    'dilations': [1, 2, 4],
                    'use_skip_connections': True,
@@ -182,7 +182,7 @@ if __name__ == '__main__':
               'price_tcn':
                   {'nb_filters': 16,
                    'kernel_size': 3,
-                   'nb_stacks': 1,
+                   'nb_stacks': 2,
                    'padding': 'causal',
                    'dilations': [1, 2, 4, 8],
                    'use_skip_connections': True,
@@ -192,7 +192,7 @@ if __name__ == '__main__':
               'hist_tcn':
                   {'nb_filters': 16,
                    'kernel_size': 3,
-                   'nb_stacks': 1,
+                   'nb_stacks': 2,
                    'padding': 'causal',
                    'dilations': [1, 2, 4, 8],
                    'use_skip_connections': True,
@@ -202,7 +202,7 @@ if __name__ == '__main__':
               'early_tcn':
                   {'nb_filters': 32,
                    'kernel_size': 3,
-                   'nb_stacks': 1,
+                   'nb_stacks': 2,
                    'padding': 'causal',
                    'dilations': [1, 2, 4, 8],
                    'use_skip_connections': True,

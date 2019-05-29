@@ -26,23 +26,28 @@ def build_model(n_cfs, params, act='relu'):
     # impression(meta encoded) input
     imp_input = Input(shape=(None, 157), name='imp_input')
     imp_tcn = TCN(**imp_tcn_params)(imp_input)
+    imp_tcn = BatchNormalization()(imp_tcn)
 
     # price input
     price_input = Input(shape=(None, 2), name='price_input')
     price_tcn = TCN(**price_tcn_params)(price_input)
+    price_tcn = BatchNormalization()(price_tcn)
 
     # history
     hist_input = Input(shape=(None, 4), name='hist_input')
     hist_tcn = TCN(**hist_tcn_params)(hist_input)
+    hist_tcn = BatchNormalization()(hist_tcn)
 
     # c_filter
     c_filter_input = Input(shape=(n_cfs,), name='cfilter_input')
     c_filter_dense = Dense(units=8, activation=act)(c_filter_input)
+    c_filter_dense = BatchNormalization()(c_filter_dense)
     c_filter_dense = Dropout(0.2)(c_filter_dense)
 
     # numeric
     numeric_input = Input(shape=(3,), name='numeric_input')
-    numeric_dense = Dense(16, activation=act)(numeric_input)
+    numeric_dense = Dense(8, activation=act)(numeric_input)
+    numeric_dense = BatchNormalization()(numeric_dense)
 
     # concat tcn inputs (early fusion)
     early_fusion = concatenate([imp_input, price_input, hist_input])
@@ -53,7 +58,7 @@ def build_model(n_cfs, params, act='relu'):
     late_fusion = concatenate([early_fusion_tcn, imp_tcn, price_tcn, hist_tcn,
                                c_filter_dense, numeric_dense])
     late_fusion = BatchNormalization()(late_fusion)
-    late_fusion = Dense(64, activation=act)(late_fusion)
+    late_fusion = Dense(32, activation=act)(late_fusion)
 
     # output layer
     output_layer = Dense(25, activation='softmax')(late_fusion)

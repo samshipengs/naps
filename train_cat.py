@@ -17,7 +17,7 @@ Filepath = get_data_path()
 
 
 def train(train_inputs, params, retrain=False):
-    # cache_path = Filepath.gbm_cache_path
+    cache_path = Filepath.gbm_cache_path
     model_path = Filepath.model_path
 
     targets = train_inputs['target']
@@ -33,7 +33,7 @@ def train(train_inputs, params, retrain=False):
         
         # =====================================================================================
         # create model
-        model_filename = os.path.join(model_path, f'cv{fold}.model')
+        model_filename = os.path.join(model_path, f'cat_cv{fold}.model')
         if os.path.isfile(model_filename) and not retrain:
             logger.info(f'Loading model from existing {model_filename}')
             # model = load_model(model_filename)
@@ -47,13 +47,12 @@ def train(train_inputs, params, retrain=False):
                     early_stopping_rounds=100,
                     verbose=100,
                     plot=False)
-            trn_imp = clf.get_feature_importance(data=cat.Pool(data=x_trn, label=y_trn),
-                                                 prettified=True,
+            trn_imp = clf.get_feature_importance(prettified=True,
                                                  type='FeatureImportance')
 
-            # plot_imp_cat(trn_imp, 'train')
-            if trn_imp:
-                plot_imp_cat(trn_imp, fold)
+            plot_imp_cat(trn_imp, 'train')
+            # if trn_imp:
+            #     plot_imp_cat(trn_imp, fold)
 
             clf.save_model(model_filename)
 
@@ -78,8 +77,7 @@ def train(train_inputs, params, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 1000000,
-             'add_cv_encoding': False,
+    setup = {'nrows': 5000000,
              'recompute_train': False,
              'retrain': True,
              'recompute_test': True}
@@ -88,7 +86,7 @@ if __name__ == '__main__':
     params = {'loss_function': 'MultiClass',
               'custom_metric': ['MultiClass', 'Accuracy'],
               'eval_metric': 'MultiClass',
-              'iterations': 1000,
+              'iterations': 5000,
               'learning_rate': 0.02,
               'depth': 8,
               'task_type': device}
@@ -97,13 +95,11 @@ if __name__ == '__main__':
     logger.info(f"\nParams\n{'='*20}\n{params}\n{'='*20}")
 
     # first create training inputs
-    train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], add_cv_encoding=setup['add_cv_encoding'],
-                                       recompute=setup['recompute_train'])
+    train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], recompute=setup['recompute_train'])
     # train the model
-    models = train(train_inputs, params=params, add_cv_encoding=setup['add_cv_encoding'], retrain=setup['retrain'])
+    models = train(train_inputs, params=params, retrain=setup['retrain'])
     # get the test inputs
-    test_inputs = create_model_inputs(mode='test', nrows=setup['nrows'], add_cv_encoding=setup['add_cv_encoding'],
-                                      recompute=setup['recompute_test'])
+    test_inputs = create_model_inputs(mode='test', nrows=setup['nrows'], recompute=setup['recompute_test'])
     # make predictions on test
     logger.info('Load test sub csv')
     test_sub = pd.read_csv(os.path.join(Filepath.sub_path, 'test_sub.csv'))

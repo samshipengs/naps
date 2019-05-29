@@ -64,7 +64,7 @@ def plot_imp_cat(data, fold_, plot_n=15):
     imp_des[:plot_n].plot(x='features', y='feature_importance', ax=axes[0], kind='barh', grid=True)
     imp_asc[:plot_n].plot(x='features', y='feature_importance', ax=axes[1], kind='barh', grid=True)
     plt.tight_layout()
-    fig.savefig('./imps/{}.png'.format(fold_))
+    fig.savefig('./imps/cat{}.png'.format(fold_))
 
 
 def plot_imp_lgb(imp_df, fold_, plot_n=15):
@@ -83,5 +83,5 @@ def plot_imp_lgb(imp_df, fold_, plot_n=15):
     _ = imp_des.plot(x='features', y='feature_importance', ax=axes[0], kind='barh', grid=True)
     _ = imp_asc.plot(x='features', y='feature_importance', ax=axes[1], kind='barh', grid=True)
     plt.tight_layout()
-    fig.savefig('./imps/{}.png'.format(fold_))
+    fig.savefig('./imps/lgb{}.png'.format(fold_))
     plt.gcf().clear()

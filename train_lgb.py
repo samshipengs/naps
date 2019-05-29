@@ -98,7 +98,7 @@ def train(train_inputs, params, retrain=False, continue_train=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': None,
+    setup = {'nrows': 5000000,
              'recompute_train': True,
              'retrain': True,
              'continue_train': False,

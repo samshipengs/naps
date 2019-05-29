@@ -20,7 +20,7 @@ def flogger(df, name):
 
 
 def create_action_type_mapping(recompute=False):
-    filepath = Filepath.nn_cache_path
+    filepath = Filepath.gbm_cache_path
     filename = os.path.join(filepath, 'action_types_mapping.npy')
 
     if os.path.isfile(filename) and not recompute:
@@ -41,7 +41,7 @@ def create_action_type_mapping(recompute=False):
 
 
 def meta_encoding(recompute=False):
-    filepath = Filepath.nn_cache_path
+    filepath = Filepath.gbm_cache_path
     filename = os.path.join(filepath, 'meta_mapping.npy')
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load from existing file: {filename}')
@@ -71,7 +71,7 @@ def meta_encoding(recompute=False):
 
 
 def create_cfs_mapping(select_n_filters=32, recompute=False):
-    filename = os.path.join(Filepath.nn_cache_path, 'filters_mapping.npy')
+    filename = os.path.join(Filepath.gbm_cache_path, 'filters_mapping.npy')
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load filters mapping from existing: {filename}')
         filters2natural = np.load(filename).item()
@@ -103,7 +103,7 @@ def create_cfs_mapping(select_n_filters=32, recompute=False):
 def prepare_data(mode, nrows=None, convert_action_type=True, add_test=True, recompute=False):
     nrows_str = 'all' if nrows is None else nrows
     add_test_str = 'with_test' if add_test else 'no_test'
-    filename = os.path.join(Filepath.nn_cache_path, f'{mode}_{nrows_str}_{add_test_str}.snappy')
+    filename = os.path.join(Filepath.gbm_cache_path, f'{mode}_{nrows_str}_{add_test_str}.snappy')
 
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load from existing {filename}')
@@ -255,14 +255,14 @@ def compute_session_fts(df, mode=None, nprocs=None):
     pool.close()
     pool.join()
     fts_df = pd.concat(fts, axis=0)
-    # fts_df.to_parquet(os.path.join(Filepath.nn_cache_path, f'{mode}_session_fts.snappy'))
+    # fts_df.to_parquet(os.path.join(Filepath.gbm_cache_path, f'{mode}_session_fts.snappy'))
     logger.info(f'\n{fts_df.head()}\n{fts_df.columns}')
     logger.info(f'Total time taken to generate fts: {(time.time()-t1)/60:.2f} mins')
     return fts_df
 
 
 def save_cache(arr, name):
-    filepath = Filepath.nn_cache_path
+    filepath = Filepath.gbm_cache_path
     np.save(os.path.join(filepath, name), arr)
 
 

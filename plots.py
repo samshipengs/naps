@@ -54,7 +54,7 @@ def confusion_matrix(y_pred, y_true, name, normalize='row', level=0, log_scale=F
 def plot_imp_cat(data, fold_, plot_n=15):
     check_dir('./imps')
     imp = pd.DataFrame.from_records(data)
-    imp.to_csv(f'./imps/{fold_}.csv', index=False)
+    imp.to_csv(f'./imps/cat_{fold_}.csv', index=False)
     imp.columns = ['features', 'feature_importance']
     imp_des = imp.sort_values(by='feature_importance', ascending=False)
     imp_asc = imp.sort_values(by='feature_importance', ascending=True)
@@ -64,7 +64,7 @@ def plot_imp_cat(data, fold_, plot_n=15):
     imp_des[:plot_n].plot(x='features', y='feature_importance', ax=axes[0], kind='barh', grid=True)
     imp_asc[:plot_n].plot(x='features', y='feature_importance', ax=axes[1], kind='barh', grid=True)
     plt.tight_layout()
-    fig.savefig('./imps/cat{}.png'.format(fold_))
+    fig.savefig('./imps/cat_{}.png'.format(fold_))
 
 
 def plot_imp_lgb(imp_df, fold_, plot_n=15):

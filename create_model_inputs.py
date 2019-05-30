@@ -177,6 +177,7 @@ def compute_session_func(grp):
     prev_interact_df = pd.DataFrame(np.eye(len(unique_items), dtype=int)[df[other_mask]['reference_natural'].values],
                                     columns=prev_interact_cols, index=df[other_mask].index)
     df = pd.concat([df, prev_click_df, prev_interact_df], axis=1)
+    df.drop('reference_natural', axis=1, inplace=True)
 
     # first get all previous clicks, and others
     df_temp = df.copy()
@@ -300,8 +301,9 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         # pad zeros
         cols_to_pad = ['impressions', 'last_click', 'prev_click', 'last_interact', 'prev_interact']
         for c in cols_to_pad:
+            # convert list of pad as array gets saved without comma in csv
             df.loc[padding_mask, c] = (df.loc[padding_mask, c]
-                                       .apply(lambda x: np.pad(x, (0, 25 - len(x)), mode='constant')))
+                                       .apply(lambda x: list(np.pad(x, (0, 25 - len(x)), mode='constant')) ))
         logger.debug(f'Nans:\n{df.isna().sum()}')
 
         # get target
@@ -326,6 +328,7 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
             df = df[df['target'].notna()].reset_index(drop=True)
             df['target'] = df['target'].astype(int)
             logger.info(f"Target distribution: \n{pd.value_counts(df['target']).head()}")
+
         if mode == 'test':
             # for testing submission, keep records of the sessions_ids and impressions (still a str)
             test_sub = df[['session_id', 'impressions']]
@@ -385,22 +388,13 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
                                                                                 axis=0)
                                                              if type(cfs) == list
                                                              else np.zeros(n_cfs, dtype=np.int16)))
-        #
-        # if mode == 'train':
-        #     logger.info('Getting targets')
-        #     # TARGETS
-        #     targets = df['target'].values
-        #     df.drop('target', axis=1, inplace=True)
-        #     save_cache(targets, 'train_targets.npy')
-        #     del targets
-        #     gc.collect()
 
         # drop not needed columns
         drop_cols = ['impressions', 'reference']
         df.drop(drop_cols, axis=1, inplace=True)
         # finally expand all column of list to columns
-        expand_cols = ['prices', 'prices_rank', 'last_click', 'prev_click', 'last_interact', 'prev_interact',
-                       'current_filters']
+        expand_cols = ['prices', 'prices_rank', 'last_click', 'prev_click', 'last_interact',
+                       'prev_interact', 'current_filters']
         for col in expand_cols:
             logger.info(f'Expanding on {col}')
             df = expand(df, col)

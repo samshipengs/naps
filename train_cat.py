@@ -3,6 +3,7 @@ import time
 import pandas as pd
 import numpy as np
 from datetime import datetime as dt
+from ast import literal_eval
 
 from sklearn.model_selection import StratifiedKFold
 import catboost as cat
@@ -16,8 +17,15 @@ logger = get_logger('train_model')
 Filepath = get_data_path()
 
 
-def train(train_inputs, params, retrain=False):
-    cache_path = Filepath.gbm_cache_path
+def train(train_inputs, params, check_last=False, retrain=False):
+    if check_last:
+        # temp
+        train_ids = np.load('./gbm_cache/train_ids.npy')
+        train_inputs['session_id'] = train_ids
+        train_inputs = train_inputs.groupby('session_id').last().reset_index(drop=True)
+        # temp
+
+    # cache_path = Filepath.gbm_cache_path
     model_path = Filepath.model_path
 
     targets = train_inputs['target']
@@ -50,10 +58,7 @@ def train(train_inputs, params, retrain=False):
             trn_imp = clf.get_feature_importance(prettified=True,
                                                  type='FeatureImportance')
 
-            plot_imp_cat(trn_imp, 'train')
-            # if trn_imp:
-            #     plot_imp_cat(trn_imp, fold)
-
+            plot_imp_cat(trn_imp, fold)
             clf.save_model(model_filename)
 
         # make prediction
@@ -78,17 +83,19 @@ def train(train_inputs, params, retrain=False):
 
 if __name__ == '__main__':
     setup = {'nrows': 5000000,
+             'test_rows': None,
              'recompute_train': False,
-             'retrain': True,
-             'recompute_test': True}
+             'retrain': False,
+             'recompute_test': False}
 
     device = 'GPU' if check_gpu() else 'CPU'
     params = {'loss_function': 'MultiClass',
               'custom_metric': ['MultiClass', 'Accuracy'],
               'eval_metric': 'MultiClass',
-              'iterations': 5000,
+              'iterations': 10000,
               'learning_rate': 0.02,
               'depth': 8,
+              'min_data_in_leaf': 2,
               'task_type': device}
 
     logger.info(f"\nSetup\n{'='*20}\n{setup}\n{'='*20}")
@@ -99,21 +106,27 @@ if __name__ == '__main__':
     # train the model
     models = train(train_inputs, params=params, retrain=setup['retrain'])
     # get the test inputs
-    test_inputs = create_model_inputs(mode='test', nrows=setup['nrows'], recompute=setup['recompute_test'])
+    test_inputs = create_model_inputs(mode='test', nrows=setup['test_rows'], recompute=setup['recompute_test'])
+    # test_inputs = test_inputs.sort_values(by=['cust'])
+    test_ids = np.load('./gbm_cache/test_ids.npy')
+    test_inputs['session_id'] = test_ids
+    test_inputs = test_inputs.groupby('session_id').last().reset_index(drop=True)
     # make predictions on test
     logger.info('Load test sub csv')
     test_sub = pd.read_csv(os.path.join(Filepath.sub_path, 'test_sub.csv'))
+    test_sub = test_sub.groupby('session_id').last().reset_index(drop=False)
+    test_sub.loc[:, 'impressions'] = test_sub.loc[:, 'impressions'].apply(lambda x: literal_eval(x))
+
     sub_popular = pd.read_csv(os.path.join(Filepath.data_path, 'submission_popular.csv'))
     sub_columns = sub_popular.columns
 
     # filter away the 0 padding and join list recs to string
     def create_recs(recs):
-        return ' '.join([i for i in recs if i != 0])
-
+        return ' '.join([str(i) for i in recs if i != 0])
 
     test_predictions = []
     for c, clf in enumerate(models):
-        test_sub_m = test_sub.copy()
+        # test_sub_m = test_sub.copy()
         logger.info(f'Generating predictions from model {c}')
         test_pred = clf.predict_proba(test_inputs)
         test_predictions.append(test_pred)
@@ -124,9 +137,9 @@ if __name__ == '__main__':
     np.save(os.path.join(Filepath.sub_path, f'test_pred_label.npy'), test_pred_label)
 
     # pad to 25
-    test_sub['impressions'] = test_sub['impressions'].str.split('|')
-    print(test_sub['impressions'].str.len().describe())
-    test_sub['impressions'] = test_sub['impressions'].apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant'))
+    # test_sub['impressions'] = test_sub['impressions'].str.split('|')
+    # print(test_sub['impressions'].str.len().describe())
+    # test_sub['impressions'] = test_sub['impressions'].apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant'))
     test_impressions = np.array(list(test_sub['impressions'].values))
 
     test_impressions_pred = test_impressions[np.arange(len(test_impressions))[:, None], test_pred_label]
@@ -139,7 +152,7 @@ if __name__ == '__main__':
     del test_sub['item_recommendations']
     test_sub.rename(columns={'recommendations': 'item_recommendations'}, inplace=True)
     test_sub = test_sub[sub_columns]
-    current_time = dt.now().strftime('%m-%d')
+    current_time = dt.now().strftime('%m-%d-%M')
     test_sub.to_csv(os.path.join(Filepath.sub_path, f'cat_sub_{current_time}.csv'), index=False)
     logger.info('Done all')
 

@@ -5,7 +5,7 @@ import numpy as np
 from datetime import datetime as dt
 from ast import literal_eval
 
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, KFold
 import catboost as cat
 
 from create_model_inputs import create_model_inputs
@@ -17,28 +17,39 @@ logger = get_logger('train_model')
 Filepath = get_data_path()
 
 
-def train(train_inputs, params, check_last=False, retrain=False):
-    if check_last:
+def train(train_inputs, params, only_last=False, retrain=False):
+    # temp
+    train_ids = np.load('./gbm_cache/train_ids.npy')
+    train_inputs['session_id'] = train_ids
+    if only_last:
+        logger.info('Training ONLY with last row')
         # temp
-        train_ids = np.load('./gbm_cache/train_ids.npy')
-        train_inputs['session_id'] = train_ids
-        train_inputs = train_inputs.groupby('session_id').last().reset_index(drop=True)
-        # temp
+        train_inputs = train_inputs.groupby('session_id').last().reset_index(drop=False)
 
+    uids = train_inputs['session_id'].unique()
     # cache_path = Filepath.gbm_cache_path
     model_path = Filepath.model_path
 
     targets = train_inputs['target']
     train_inputs.drop('target', axis=1, inplace=True)
 
-    skf = StratifiedKFold(n_splits=6)
+    # kf = StratifiedKFold(n_splits=6)
+    kf = KFold(n_splits=5, shuffle=True)
+
     clfs = []
     t_init = time.time()
-    for fold, (trn_ind, val_ind) in enumerate(skf.split(targets, targets)):
+    # for fold, (trn_ind, val_ind) in enumerate(skf.split(targets, targets)):
+    for fold, (trn_ind, val_ind) in enumerate(kf.split(uids)):
         logger.info(f'Training fold {fold}: train len={len(trn_ind):,} | val len={len(val_ind):,}')
-        x_trn, x_val = train_inputs.iloc[trn_ind].reset_index(drop=True), train_inputs.iloc[val_ind].reset_index(drop=True)
-        y_trn, y_val = targets.iloc[trn_ind], targets.iloc[val_ind]
-        
+        # x_trn, x_val = train_inputs.iloc[trn_ind].reset_index(drop=True), train_inputs.iloc[val_ind].reset_index(drop=True)
+        # y_trn, y_val = targets.iloc[trn_ind], targets.iloc[val_ind]
+        trn_ids = train_ids[trn_ind]
+        trn_mask = train_inputs['session_id'].isin(trn_ids)
+        x_trn, x_val = train_inputs[trn_mask].reset_index(drop=True), train_inputs[~trn_mask].reset_index(drop=True)
+        y_trn, y_val = targets[trn_mask].values, targets[~trn_mask].values
+        x_trn.drop('session_id', axis=1, inplace=True)
+        x_val.drop('session_id', axis=1, inplace=True)
+
         # =====================================================================================
         # create model
         model_filename = os.path.join(model_path, f'cat_cv{fold}.model')
@@ -63,13 +74,13 @@ def train(train_inputs, params, check_last=False, retrain=False):
 
         # make prediction
         trn_pred = clf.predict_proba(x_trn)
-        trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.values.reshape(-1, 1))[1]
+        trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
         plot_hist(trn_pred_label, y_trn, 'train')
         confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
         trn_mrr = np.mean(1 / (trn_pred_label + 1))
 
         val_pred = clf.predict_proba(x_val)
-        val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.values.reshape(-1, 1))[1]
+        val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
         plot_hist(val_pred_label, y_val, 'validation')
         confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
         val_mrr = np.mean(1 / (val_pred_label + 1))
@@ -85,6 +96,7 @@ if __name__ == '__main__':
     setup = {'nrows': 5000000,
              'test_rows': None,
              'recompute_train': False,
+             'only_last': False,
              'retrain': False,
              'recompute_test': False}
 
@@ -104,7 +116,7 @@ if __name__ == '__main__':
     # first create training inputs
     train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], recompute=setup['recompute_train'])
     # train the model
-    models = train(train_inputs, params=params, retrain=setup['retrain'])
+    models = train(train_inputs, params=params, only_last=setup['only_last'], retrain=setup['retrain'])
     # get the test inputs
     test_inputs = create_model_inputs(mode='test', nrows=setup['test_rows'], recompute=setup['recompute_test'])
     # test_inputs = test_inputs.sort_values(by=['cust'])

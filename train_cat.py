@@ -27,7 +27,6 @@ def train(train_inputs, params, only_last=False, retrain=False):
         train_inputs = train_inputs.groupby('session_id').last().reset_index(drop=False)
 
     uids = train_inputs['session_id'].unique()
-    # cache_path = Filepath.gbm_cache_path
     model_path = Filepath.model_path
 
     targets = train_inputs['target']
@@ -37,6 +36,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
     kf = KFold(n_splits=5, shuffle=True)
 
     clfs = []
+    mrrs = []
     t_init = time.time()
     # for fold, (trn_ind, val_ind) in enumerate(skf.split(targets, targets)):
     for fold, (trn_ind, val_ind) in enumerate(kf.split(uids)):
@@ -87,9 +87,10 @@ def train(train_inputs, params, only_last=False, retrain=False):
         logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')
 
         clfs.append(clf)
+        mrrs.append((trn_mrr, val_mrr))
 
     logger.info(f'Total time took: {(time.time()-t_init)/60:.2f} mins')
-    return clfs
+    return clfs, mrrs
 
 
 if __name__ == '__main__':
@@ -116,11 +117,13 @@ if __name__ == '__main__':
     # first create training inputs
     train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], recompute=setup['recompute_train'])
     # train the model
-    models = train(train_inputs, params=params, only_last=setup['only_last'], retrain=setup['retrain'])
+    models, mrrs = train(train_inputs, params=params, only_last=setup['only_last'], retrain=setup['retrain'])
+    train_mrr = np.mean([mrr[0] for mrr in mrrs])
+    val_mrr = np.mean([mrr[1] for mrr in mrrs])
     # get the test inputs
     test_inputs = create_model_inputs(mode='test', nrows=setup['test_rows'], recompute=setup['recompute_test'])
     # test_inputs = test_inputs.sort_values(by=['cust'])
-    test_ids = np.load('./gbm_cache/test_ids.npy')
+    test_ids = np.load(os.path.join(Filepath.gbm_cache_path, 'test_ids.npy'))
     test_inputs['session_id'] = test_ids
     test_inputs = test_inputs.groupby('session_id').last().reset_index(drop=True)
     # make predictions on test
@@ -164,7 +167,7 @@ if __name__ == '__main__':
     del test_sub['item_recommendations']
     test_sub.rename(columns={'recommendations': 'item_recommendations'}, inplace=True)
     test_sub = test_sub[sub_columns]
-    current_time = dt.now().strftime('%m-%d-%M')
+    current_time = dt.now().strftime('%m-%d-%H-%M')
     test_sub.to_csv(os.path.join(Filepath.sub_path, f'cat_sub_{current_time}.csv'), index=False)
     logger.info('Done all')
 

@@ -310,6 +310,9 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         if mode == 'train':
             logger.info('Assign target')
             logger.info('Convert reference id to int')
+            logger.info('First convert non-integer str reference value to a number')
+            non_int = df['reference'].str.contains(r'[^\d]+')
+            df.loc[non_int, 'reference'] = '-1'
             df['reference'] = df['reference'].astype(int)
 
             # filter out nan rows with reference_id not in impressions list, since if the true target in test

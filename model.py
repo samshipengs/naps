@@ -8,7 +8,7 @@ from utils import get_logger
 logger = get_logger('model')
 
 
-def build_model(dense_act='relu', kernel_initializer='he_uniform'):
+def build_model(dense_act='relu', kernel_initializer='glorot_uniform'):
     K.clear_session()
     # build model =====================================================================================
     # numerics
@@ -18,15 +18,15 @@ def build_model(dense_act='relu', kernel_initializer='he_uniform'):
 
     # prices
     prices_input = Input(shape=(50, ), name='prices_input')
-    prices_dense = Dense(units=32, activation=dense_act, kernel_initializer=kernel_initializer,
+    prices_dense = Dense(units=64, activation=dense_act, kernel_initializer=kernel_initializer,
                          name='merged_tcn_dense')(prices_input)
     prices_dense = BatchNormalization()(prices_dense)
 
     # clicks
     clicks_input = Input(shape=(100, ), name='clicks_input')
     clicks_dense = Dense(units=64, activation=dense_act, kernel_initializer=kernel_initializer,
-                           name='cfilter_dense1')(clicks_input)
-    cfilter_dense = BatchNormalization()(clicks_dense)
+                         name='cfilter_dense1')(clicks_input)
+    clicks_dense = BatchNormalization()(clicks_dense)
 
     # early fusion
     concat1 = concatenate([numerics_input, prices_input, clicks_input])
@@ -36,7 +36,7 @@ def build_model(dense_act='relu', kernel_initializer='he_uniform'):
 
     # late fusion
     concat2 = concatenate([concat1, numerics_dense, prices_dense, clicks_dense])
-    concat2 = Dense(units=128, activation=dense_act, kernel_initializer=kernel_initializer)(concat2)
+    concat2 = Dense(units=256, activation=dense_act, kernel_initializer=kernel_initializer)(concat2)
     concat2 = BatchNormalization()(concat2)
     concat2 = Dropout(0.2)(concat2)
 

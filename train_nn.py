@@ -86,6 +86,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
     click_cols = [c for c in train_inputs.columns if 'click' in c or 'interact' in c]
     cf_cols = [c for c in train_inputs.columns if 'filter' in c]
     # drop cf for now
+    train_inputs.fillna(0, inplace=True)
     train_inputs.drop(cf_cols, axis=1, inplace=True)
 
     batch_size = params['batch_size']
@@ -105,6 +106,18 @@ def train(train_inputs, params, only_last=False, retrain=False):
                            train_inputs.loc[~trn_mask, click_cols].values
         trn_price, val_price = train_inputs.loc[trn_mask, price_cols].values, \
                            train_inputs.loc[~trn_mask, price_cols].values
+
+        # normalize num
+        trn_num_mean = np.mean(trn_num, axis=0)
+        trn_num_sd = np.std(trn_num, axis=0)
+        trn_num = (trn_num - trn_num_mean)/trn_num_sd
+        val_num = (val_num - trn_num_mean)/trn_num_sd
+
+        # normalize prices
+        trn_price[:, :25] = trn_price[:, :25]/(np.max(trn_price[:, :25], axis=1)[:, None])
+        trn_price[:, 25:] = trn_price[:, 25:]/(np.max(trn_price[:, 25:], axis=1)[:, None])
+        val_price[:, :25] = val_price[:, :25]/(np.max(val_price[:, :25], axis=1)[:, None])
+        val_price[:, 25:] = val_price[:, 25:]/(np.max(val_price[:, 25:], axis=1)[:, None])
 
         y_trn, y_val = targets[trn_mask].values, targets[~trn_mask].values
         # x_trn.drop('session_id', axis=1, inplace=True)
@@ -131,7 +144,8 @@ def train(train_inputs, params, only_last=False, retrain=False):
             log_dir = Filepath.tf_logs
             log_filename = ('{0}-batchsize{1}_epochs{2}_nparams_{3}'
                             .format(dt.now().strftime('%m-%d-%H-%M'), batch_size, n_epochs, nparams))
-            tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True, write_grads=True)
+            tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True, histogram_freq=20,
+                             write_grads=True)
             callbacks.append(tb)
             # lr
             lr = LRTensorBoard(log_dir)
@@ -188,15 +202,15 @@ def train(train_inputs, params, only_last=False, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 5000000,
+    setup = {'nrows': None,
              'test_rows': None,
              'recompute_train': False,
              'only_last': False,
-             'retrain': False,
+             'retrain': True,
              'recompute_test': False}
 
     params = {'batch_size': 512,
-              'n_epochs': 200,
+              'n_epochs': 1000,
               'early_stopping_patience': 50,
               'reduce_on_plateau_patience': 30,
               'learning_rate': 0.001,

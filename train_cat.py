@@ -94,11 +94,11 @@ def train(train_inputs, params, only_last=False, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 5000000,
+    setup = {'nrows': None,
              'test_rows': None,
              'recompute_train': False,
              'only_last': False,
-             'retrain': False,
+             'retrain': True,
              'recompute_test': False}
 
     device = 'GPU' if check_gpu() else 'CPU'

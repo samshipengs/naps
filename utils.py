@@ -42,6 +42,10 @@ def get_data_path():
 Filepath = get_data_path()
 
 
+def flogger(df, name):
+    logger.info(f'{name} shape: ({df.shape[0]:,}, {df.shape[1]})')
+
+
 def get_logger(name):
     logger_path = Filepath.log_path
     check_dir(logger_path)
@@ -89,7 +93,6 @@ def load_data(data_soruce, nrows=None, verbose=False, **kwargs):
     """
     Load csv files as dataframe
     :param data_soruce: str, train or test
-    :param data_path: directory path where data sits
     :param nrows: number of rows to have
     :param verbose: boolean, print memory usage
     :param kwargs:

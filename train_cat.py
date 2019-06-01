@@ -5,7 +5,7 @@ import numpy as np
 from datetime import datetime as dt
 from ast import literal_eval
 
-from sklearn.model_selection import StratifiedKFold, KFold
+from sklearn.model_selection import KFold
 import catboost as cat
 
 from create_model_inputs import create_model_inputs
@@ -18,36 +18,42 @@ Filepath = get_data_path()
 
 
 def train(train_inputs, params, only_last=False, retrain=False):
-    # temp
-    train_ids = np.load('./gbm_cache/train_ids.npy')
-    train_inputs['session_id'] = train_ids
-    if only_last:
-        logger.info('Training ONLY with last row')
-        # temp
-        train_inputs = train_inputs.groupby('session_id').last().reset_index(drop=False)
-
-    uids = train_inputs['session_id'].unique()
+    # path to where model is saved
     model_path = Filepath.model_path
 
+    # if only use the last row of train_inputs to train
+    if only_last:
+        logger.info('Training ONLY with last row')
+        train_inputs = train_inputs.groupby('session_id').last().reset_index(drop=False)
+
+    # grab unique session ids and use this to split, so that train_inputs with same session_id do not spread to both
+    # train and valid
+    unique_session_ids = train_inputs['session_id'].unique()
+
+    # get target
     targets = train_inputs['target']
     train_inputs.drop('target', axis=1, inplace=True)
 
     # kf = StratifiedKFold(n_splits=6)
     kf = KFold(n_splits=5, shuffle=True)
 
+    # record classifiers and mrr each training
     clfs = []
     mrrs = []
     t_init = time.time()
-    # for fold, (trn_ind, val_ind) in enumerate(skf.split(targets, targets)):
-    for fold, (trn_ind, val_ind) in enumerate(kf.split(uids)):
+    for fold, (trn_ind, val_ind) in enumerate(kf.split(unique_session_ids)):
         logger.info(f'Training fold {fold}: train len={len(trn_ind):,} | val len={len(val_ind):,}')
-        # x_trn, x_val = train_inputs.iloc[trn_ind].reset_index(drop=True), train_inputs.iloc[val_ind].reset_index(drop=True)
-        # y_trn, y_val = targets.iloc[trn_ind], targets.iloc[val_ind]
-        trn_ids = train_ids[trn_ind]
+        # get session_id used for train
+        trn_ids = unique_session_ids[trn_ind]
         trn_mask = train_inputs['session_id'].isin(trn_ids)
-        x_trn, x_val = train_inputs[trn_mask].reset_index(drop=True), train_inputs[~trn_mask].reset_index(drop=True)
+
+        x_trn, x_val = (train_inputs[trn_mask].reset_index(drop=True),
+                        train_inputs[~trn_mask].reset_index(drop=True))
+
         y_trn, y_val = targets[trn_mask].values, targets[~trn_mask].values
         x_trn.drop('session_id', axis=1, inplace=True)
+        # for validation only last row is needed
+        x_val = x_val.groupby('session_id').last().reset_index(drop=False)
         x_val.drop('session_id', axis=1, inplace=True)
 
         # =====================================================================================
@@ -55,8 +61,8 @@ def train(train_inputs, params, only_last=False, retrain=False):
         model_filename = os.path.join(model_path, f'cat_cv{fold}.model')
         if os.path.isfile(model_filename) and not retrain:
             logger.info(f'Loading model from existing {model_filename}')
-            # model = load_model(model_filename)
-            clf = cat.CatBoostClassifier()  # parameters not required.
+            # parameters not required.
+            clf = cat.CatBoostClassifier()
             clf.load_model(model_filename)
         else:
             # train model
@@ -68,7 +74,6 @@ def train(train_inputs, params, only_last=False, retrain=False):
                     plot=False)
             trn_imp = clf.get_feature_importance(prettified=True,
                                                  type='FeatureImportance')
-
             plot_imp_cat(trn_imp, fold)
             clf.save_model(model_filename)
 
@@ -115,17 +120,16 @@ if __name__ == '__main__':
     logger.info(f"\nParams\n{'='*20}\n{params}\n{'='*20}")
 
     # first create training inputs
-    train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], recompute=setup['recompute_train'])
+    train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], padding_value=np.nan,
+                                       recompute=setup['recompute_train'])
     # train the model
     models, mrrs = train(train_inputs, params=params, only_last=setup['only_last'], retrain=setup['retrain'])
     train_mrr = np.mean([mrr[0] for mrr in mrrs])
     val_mrr = np.mean([mrr[1] for mrr in mrrs])
     # get the test inputs
-    test_inputs = create_model_inputs(mode='test', nrows=setup['test_rows'], recompute=setup['recompute_test'])
-    # test_inputs = test_inputs.sort_values(by=['cust'])
-    test_ids = np.load(os.path.join(Filepath.gbm_cache_path, 'test_ids.npy'))
-    test_inputs['session_id'] = test_ids
-    test_inputs = test_inputs.groupby('session_id').last().reset_index(drop=True)
+    test_inputs = create_model_inputs(mode='test', nrows=setup['test_rows'], padding_value=np.nan,
+                                      recompute=setup['recompute_test'])
+
     # make predictions on test
     logger.info('Load test sub csv')
     test_sub = pd.read_csv(os.path.join(Filepath.sub_path, 'test_sub.csv'))
@@ -141,7 +145,6 @@ if __name__ == '__main__':
 
     test_predictions = []
     for c, clf in enumerate(models):
-        # test_sub_m = test_sub.copy()
         logger.info(f'Generating predictions from model {c}')
         test_pred = clf.predict_proba(test_inputs)
         test_predictions.append(test_pred)
@@ -151,12 +154,7 @@ if __name__ == '__main__':
     test_pred_label = np.argsort(test_predictions)[:, ::-1]
     np.save(os.path.join(Filepath.sub_path, f'test_pred_label.npy'), test_pred_label)
 
-    # pad to 25
-    # test_sub['impressions'] = test_sub['impressions'].str.split('|')
-    # print(test_sub['impressions'].str.len().describe())
-    # test_sub['impressions'] = test_sub['impressions'].apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant'))
     test_impressions = np.array(list(test_sub['impressions'].values))
-
     test_impressions_pred = test_impressions[np.arange(len(test_impressions))[:, None], test_pred_label]
     test_sub.loc[:, 'recommendations'] = [create_recs(i) for i in test_impressions_pred]
     del test_sub['impressions']
@@ -168,6 +166,6 @@ if __name__ == '__main__':
     test_sub.rename(columns={'recommendations': 'item_recommendations'}, inplace=True)
     test_sub = test_sub[sub_columns]
     current_time = dt.now().strftime('%m-%d-%H-%M')
-    test_sub.to_csv(os.path.join(Filepath.sub_path, f'cat_sub_{current_time}.csv'), index=False)
+    test_sub.to_csv(os.path.join(Filepath.sub_path, f'cat_sub_{current_time}_{train_mrr}_{val_mrr}.csv'), index=False)
     logger.info('Done all')
 

@@ -1,46 +1,26 @@
 import time
-import pandas as pd
-import numpy as np
-import datetime
 import os
 import gc
 from functools import partial
 import multiprocessing as mp
 from scipy.stats import rankdata
+import pandas as pd
+import numpy as np
 from utils import load_data, get_logger, get_data_path
-from clean_session import preprocess_sessions
-
+from preprocessing import preprocess_data
 
 logger = get_logger('create_model_inputs')
 Filepath = get_data_path()
 
 
-def flogger(df, name):
-    logger.info(f'{name} shape: ({df.shape[0]:,}, {df.shape[1]})')
-
-
-def create_action_type_mapping(recompute=False):
-    filepath = Filepath.gbm_cache_path
-    filename = os.path.join(filepath, 'action_types_mapping.npy')
-
-    if os.path.isfile(filename) and not recompute:
-        logger.info(f'Load action_types mapping from existing: {filename}')
-        action_type2natural = np.load(filename).item()
-        n_unique_actions = len(action_type2natural)
-    else:
-        # hardcode
-        actions = ['clickout item', 'search for poi', 'interaction item image',
-                   'interaction item info', 'interaction item deals',
-                   'search for destination', 'filter selection',
-                   'interaction item rating', 'search for item',
-                   'change of sort order']
-        action_type2natural = {v: k for k, v in enumerate(actions)}
-        n_unique_actions = len(actions)
-        np.save(filename, action_type2natural)
-    return action_type2natural, n_unique_actions
-
-
 def meta_encoding(recompute=False):
+    """
+    Get encoding, i.e. the properties from meta csv
+    :param recompute:
+    :return:
+        meta_mapping: dict, mapping {123: [1, 0, 0, 1, 0, ...], ...}
+        n_properties: number of unique properties
+    """
     filepath = Filepath.gbm_cache_path
     filename = os.path.join(filepath, 'meta_mapping.npy')
     if os.path.isfile(filename) and not recompute:
@@ -50,13 +30,16 @@ def meta_encoding(recompute=False):
     else:
         logger.info('Load meta data')
         meta_df = load_data('item_metadata')
+
         logger.info('Lower and split properties str to list')
         meta_df['properties'] = meta_df['properties'].str.lower().str.split('|')
+
         logger.info('Get all unique properties')
         unique_properties = list(set(np.concatenate(meta_df['properties'].values)))
         property2natural = {v: k for k, v in enumerate(unique_properties)}
         n_properties = len(unique_properties)
         logger.info(f'Total number of unique meta properties: {n_properties}')
+
         logger.info('Convert the properties to ohe and superpose for each item_id')
         meta_df['properties'] = meta_df['properties'].apply(lambda ps: [property2natural[p] for p in ps])
         meta_df['properties'] = meta_df['properties'].apply(lambda ps: np.sum(np.eye(n_properties, dtype=np.int16)[ps],
@@ -71,6 +54,14 @@ def meta_encoding(recompute=False):
 
 
 def create_cfs_mapping(select_n_filters=32, recompute=False):
+    """
+    Provide natural number representation (i.e. starting from 0 int) of top selected filters
+    :param select_n_filters: number of top filters to use
+    :param recompute:
+    :return:
+        filters2natural: dict, mapping dict e.g. {'focus on distance': 42}
+        select_n_filters+1: int, plus one as the rest filters all get assigned to one number
+    """
     filename = os.path.join(Filepath.gbm_cache_path, 'filters_mapping.npy')
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load filters mapping from existing: {filename}')
@@ -100,54 +91,12 @@ def create_cfs_mapping(select_n_filters=32, recompute=False):
     return filters2natural, select_n_filters+1
 
 
-def prepare_data(mode, nrows=None, convert_action_type=True, add_test=True, recompute=False):
-    nrows_str = 'all' if nrows is None else nrows
-    add_test_str = 'with_test' if add_test else 'no_test'
-    filename = os.path.join(Filepath.gbm_cache_path, f'{mode}_{nrows_str}_{add_test_str}.snappy')
-
-    if os.path.isfile(filename) and not recompute:
-        logger.info(f'Load from existing {filename}')
-        df = pd.read_parquet(filename)
-    else:
-        # first load data
-        if mode == 'train':
-            df = load_data(mode, nrows=nrows)
-            if add_test:
-                logger.info('Add available test data')
-                df_test = load_data('test', nrows=nrows)
-                df = pd.concat([df, df_test], axis=0, ignore_index=True)
-        else:
-            df = load_data(mode)
-        flogger(df, f'raw {mode}')
-        # pre-process data i.e. dropping duplicates, only take sessions with clicks and clip to last click out
-        df = preprocess_sessions(df, mode=mode, nrows=nrows, drop_duplicates=True, save=True, recompute=recompute)
-        if mode == 'test':
-            # then load the test that we need to submit
-            test_sub = load_data('submission_popular')
-            sub_sids = test_sub['session_id'].unique()
-            df = df[df['session_id'].isin(sub_sids)].reset_index(drop=True)
-            flogger(df, 'Load test with only what ids needed for submissions')
-
-        # get time and select columns that get used
-        df['timestamp'] = df['timestamp'].apply(lambda ts: datetime.datetime.utcfromtimestamp(ts))
-        # use_cols = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters',
-        #             'reference', 'impressions', 'prices']
-        use_cols = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters',
-                    'reference', 'impressions', 'prices']
-        df = df[use_cols]
-        if convert_action_type:
-            logger.info('Converting action_types to int (natural number)')
-            action_type2natural, _ = create_action_type_mapping(recompute=False)
-            df['action_type'] = df['action_type'].map(action_type2natural)
-        logger.info('Sort df by session_id, timestamp, step')
-        df = df.sort_values(by=['session_id', 'timestamp', 'step']).reset_index(drop=True)
-        df.drop('step', axis=1, inplace=True)
-        flogger(df, f'Prepared {mode} data')
-        df.to_parquet(filename)
-    return df
-
-
 def compute_session_func(grp):
+    """
+    Main working function to compute features or shaping data
+    :param grp: dataframe associated with a group key (session_id) from grouby
+    :return: dataframe with feature columns
+    """
     df = grp.copy()
     # number of records in session
     df['session_size'] = list(range(1, len(df)+1))
@@ -165,7 +114,7 @@ def compute_session_func(grp):
     unique_items = list(set([j for i in impressions for j in i] + list(df['reference'].unique())))
     temp_mapping = {v: k for k, v in enumerate(unique_items)}
     df['reference_natural'] = df['reference'].map(temp_mapping)
-    click_out_mask = df['action_type'] == 0
+    click_out_mask = df['action_type'] == 'clickout item'
     df.drop('action_type', axis=1, inplace=True)
     other_mask = ~click_out_mask
     prev_click_cols = [f'prev_click{i}' for i in range(len(unique_items))]
@@ -217,12 +166,24 @@ def compute_session_func(grp):
             df.drop(v, axis=1, inplace=True)
         except Exception as err:
             print('='*10, err)
-            print(df.columns.values)
+            print(df.apply(func, axis=1).head())
+            print(df.reference.head())
+            print(df[v].head())
+
             raise Exception(err)
     return df
 
 
 def compute_session(args):
+    """
+    Get assigned group ids (list of session ids) from multiprocessing and compute features using worker function with
+    groupby
+    :param args: tuple,
+        gids: list of session_ids to work on
+        df: the input dataframe (note: multiprocessing cannot share memory thus it makes copy of this df, which could
+            result in memory issue)
+    :return: dataframe: features, then later to be concatenated with results from other pools
+    """
     # grab the args
     gids, df = args
     # selecting the assigned session ids and grouping on session level
@@ -235,39 +196,60 @@ def compute_session(args):
     return features
 
 
-def compute_session_fts(df, mode=None, nprocs=None):
+def compute_session_fts(df, nprocs=None):
+    """
+    Initialize feature calculation with multiprocessing
+    :param df: input preprocessed dataframe
+    :param nprocs: numer of processes to use, if None all cores minus one is used
+    :return: dataframe: input dataframe to model
+    """
     t1 = time.time()
     if nprocs is None:
         nprocs = mp.cpu_count() - 1
+        # nprocs = 1
         logger.info('Using {} cores'.format(nprocs))
 
+    # get all session ids
     sids = df['session_id'].unique()
-
     fts = []
 
-    # create iterator to pass in args
+    # create iterator to pass in args for pool
     def args_gen():
         for i in range(nprocs):
             yield (sids[range(i, len(sids), nprocs)], df)
+
     # init multiprocessing pool
     pool = mp.Pool(nprocs)
     for ft in pool.map(compute_session, args_gen()):
         fts.append(ft)
     pool.close()
     pool.join()
+
+    # concatenate results from each pool
     fts_df = pd.concat(fts, axis=0)
-    # fts_df.to_parquet(os.path.join(Filepath.gbm_cache_path, f'{mode}_session_fts.snappy'))
     logger.info(f'\n{fts_df.head()}\n{fts_df.columns}')
     logger.info(f'Total time taken to generate fts: {(time.time()-t1)/60:.2f} mins')
     return fts_df
 
 
 def save_cache(arr, name):
+    """
+    Save array with name
+    :param arr:
+    :param name:
+    :return:
+    """
     filepath = Filepath.gbm_cache_path
     np.save(os.path.join(filepath, name), arr)
 
 
 def expand(df, col):
+    """
+    Expand a column of list to a list of columns and drop the original column
+    :param df:
+    :param col: column of df to expand on
+    :return:
+    """
     n_cols = len(df[col].iloc[0])
     expand_cols = [f'{col}_{i}' for i in range(n_cols)]
     df[expand_cols] = pd.DataFrame(df[col].values.tolist(), index=df.index)
@@ -275,10 +257,12 @@ def expand(df, col):
     return df
 
 
-def create_model_inputs(mode, nrows=100000, recompute=False):
+def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, recompute=False):
     nrows_ = nrows if nrows is not None else 15932993
-    logger.info(f"\n{'='*10} Creating {mode.upper()} model inputs with {nrows_:,} rows and recompute={recompute} {'='*10}")
-    filename = os.path.join(Filepath.gbm_cache_path, f'{mode}_inputs_{nrows}.snappy')
+    add_test_str = 'test_added' if add_test else 'no_test_added'
+    logger.info(f"\n{'='*10} Creating {mode.upper()} model inputs with {nrows_:,} rows, "
+                f"{add_test_str} and recompute={recompute} {'='*10}")
+    filename = os.path.join(Filepath.gbm_cache_path, f'{mode}_inputs_{nrows}_{add_test_str}.snappy')
 
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load from existing {filename}')
@@ -286,31 +270,34 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
     else:
         logger.info(f'Prepare {mode} data')
         t_init = time.time()
-        df = prepare_data(mode, nrows=nrows, add_test=False, recompute=False)
+        df = preprocess_data(mode, nrows=nrows, add_test=add_test, recompute=False)
         # ==============================================================================================================
+
         # process impressions
         df['impressions'] = df['impressions'].str.split('|')
 
         # get some numeric and interactions ============================================================================
         logger.info('Compute session features')
-        df = compute_session_fts(df, mode)
-
+        df = compute_session_fts(df)
+        # convert impressions to int
         df['impressions'] = df['impressions'].apply(lambda x: [int(i) for i in x])
         df['n_imps'] = df['impressions'].str.len()
         padding_mask = df['n_imps'] < 25
-        # pad zeros
+        # pad zeros for length less than 25
         cols_to_pad = ['impressions', 'last_click', 'prev_click', 'last_interact', 'prev_interact']
         for c in cols_to_pad:
             # convert list of pad as array gets saved without comma in csv
-            df.loc[padding_mask, c] = (df.loc[padding_mask, c]
-                                       .apply(lambda x: list(np.pad(x, (0, 25 - len(x)), mode='constant')) ))
+            df.loc[padding_mask, c] = (df
+                                       .loc[padding_mask, c]
+                                       .apply(lambda x: list(np.pad(x, (0, 25 - len(x)),
+                                                                    mode='constant',
+                                                                    constant_values=0))))
         logger.debug(f'Nans:\n{df.isna().sum()}')
 
         # get target
         if mode == 'train':
-            logger.info('Assign target')
-            logger.info('Convert reference id to int')
-            logger.info('First convert non-integer str reference value to a number')
+            logger.info('Assign target, first convert reference id to int'
+                        'if needed convert non-integer str reference value to a str number')
             non_int = df['reference'].str.contains(r'[^\d]+')
             df.loc[non_int, 'reference'] = '-1'
             df['reference'] = df['reference'].astype(int)
@@ -326,36 +313,24 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
                     return np.nan
 
             df['target'] = df.apply(assign_target, axis=1)
-            logger.info('Remove the ones whose reference id is not in impression list')
+            logger.info('Remove the nan target, which comes from the ones whose reference id is not in impression list')
+            nan_target = df['target'].isna()
+            logger.info(f'There are {nan_target.sum()} number of nan targets')
             # drop the ones whose reference is not in the impression list
-            df = df[df['target'].notna()].reset_index(drop=True)
+            df = df[~nan_target].reset_index(drop=True)
             df['target'] = df['target'].astype(int)
-            logger.info(f"Target distribution: \n{pd.value_counts(df['target']).head()}")
+            logger.info(f"\nTarget distribution: \n{pd.value_counts(df['target']).head()}")
 
-        if mode == 'test':
-            # for testing submission, keep records of the sessions_ids and impressions (still a str)
+        elif mode == 'test':
+            # for testing submission, keep records of the sessions_ids and impressions
             test_sub = df[['session_id', 'impressions']]
             test_sub.to_csv(os.path.join(Filepath.sub_path, 'test_sub.csv'), index=False)
             del test_sub
+        else:
+            raise ValueError('Invalid mode')
 
-        # Save the session_ids =========================================================================================
-        logger.debug(df.columns)
-        train_ids = df['session_id'].values
-        save_cache(train_ids, f'{mode}_ids.npy')
-        df.drop('session_id', axis=1, inplace=True)
-        del train_ids
-        gc.collect()
-
-        # hist_cols = ['last_click', 'prev_click', 'last_interact', 'prev_interact']
-        # history = np.concatenate([np.array(list(df[c].values))[:, :, None] for c in hist_cols], axis=-1)
-        # df.drop(hist_cols, axis=1, inplace=True)
-        # save_cache(history, f'{mode}_history.npy')
-        # del history
-        # gc.collect()
-
-        # First get price info =========================================================================================
+        # price info ===================================================================================================
         logger.info('Split prices str to list and convert to int')
-        # click_mask = df['action_type'] == 0
         df['prices'] = df['prices'].str.split('|')
         df['prices'] = df['prices'].apply(lambda x: [float(p) for p in x])
         logger.info('Add price rank')
@@ -368,11 +343,16 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         df['prices_rank'] = df['prices'].apply(_rank_price)
         logger.info('Pad 0s for prices length shorter than 25')
         padding_mask = df['prices'].str.len() < 25
-        df.loc[padding_mask, 'prices'] = df.loc[padding_mask, 'prices'].apply(lambda x: np.pad(x, (0, 25 - len(x)),
-                                                                                               mode='constant'))
-        df.loc[padding_mask, 'prices_rank'] = (df.loc[padding_mask, 'prices_rank']
-                                                 .apply(lambda x: np.pad(x, (0, 25-len(x)),
-                                                                         mode='constant', constant_values=np.nan)))
+        df.loc[padding_mask, 'prices'] = (df
+                                          .loc[padding_mask, 'prices']
+                                          .apply(lambda x: np.pad(x, (0, 25 - len(x)),
+                                                                  mode='constant',
+                                                                  constant_values=padding_value)))
+        df.loc[padding_mask, 'prices_rank'] = (df
+                                               .loc[padding_mask, 'prices_rank']
+                                               .apply(lambda x: np.pad(x, (0, 25-len(x)),
+                                                                       mode='constant',
+                                                                       constant_values=padding_value)))
 
         # current_filters ==============================================================================================
         logger.info('Lower case current filters and split to list')
@@ -381,9 +361,10 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
         logger.info(f'There are total {n_cfs} unique filters')
 
         logger.info('Apply ohe superposition of filters to each records')
-        df.loc[df['current_filters'].notna(), 'current_filters'] = (df.loc[df['current_filters'].notna(),
-                                                                           'current_filters']
-                                                                    .apply(lambda cfs: [cfs2natural[cf] for cf in cfs]))
+        cf_not_na_mask = df['current_filters'].notna()
+        df.loc[cf_not_na_mask, 'current_filters'] = (df
+                                                     .loc[cf_not_na_mask, 'current_filters']
+                                                     .apply(lambda cfs: [cfs2natural[cf] for cf in cfs]))
         del cfs2natural
         gc.collect()
         # zeros if the cfs is nan (checked with type(cfs) is list not float
@@ -392,9 +373,10 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
                                                              if type(cfs) == list
                                                              else np.zeros(n_cfs, dtype=np.int16)))
 
-        # drop not needed columns
+        # drop columns that not needed
         drop_cols = ['impressions', 'reference']
         df.drop(drop_cols, axis=1, inplace=True)
+
         # finally expand all column of list to columns
         expand_cols = ['prices', 'prices_rank', 'last_click', 'prev_click', 'last_interact',
                        'prev_interact', 'current_filters']
@@ -402,15 +384,22 @@ def create_model_inputs(mode, nrows=100000, recompute=False):
             logger.info(f'Expanding on {col}')
             df = expand(df, col)
 
+        # if test, only need to keep last row
+        if mode == 'test':
+            df = df.groupby('session_id').last().reset_index(drop=True)
+        # save
         df.to_parquet(filename)
-
         logger.info(f'Total {mode} data input creation took: {(time.time()-t_init)/60:.2f} mins')
+    logger.warning("Note: no features were normalized!")
     return df
 
 
 if __name__ == '__main__':
     args = {'mode': 'train',
             'nrows': 100000,
+            'add_test': False,
+            'padding_value': np.nan,
             'recompute': True}
-    logger.info(f'Creating data input: {args}')
+
+    logger.info(f'Creating model input: {args}')
     _ = create_model_inputs(**args)

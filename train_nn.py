@@ -11,6 +11,7 @@ from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint, ReduceLROn
 from keras.utils import plot_model
 from keras.models import load_model
 from model import build_model
+from clr_callback import CyclicLR
 from create_model_inputs import create_model_inputs
 from utils import get_logger, get_data_path
 from plots import plot_hist, confusion_matrix
@@ -19,6 +20,7 @@ from plots import plot_hist, confusion_matrix
 logger = get_logger('train_model')
 Filepath = get_data_path()
 RS = 42
+
 
 class LoggingCallback(Callback):
     """Callback that logs message at end of epoch.
@@ -112,7 +114,9 @@ def train(train_inputs, params, only_last=False, retrain=False):
         x_val.drop(['session_id', 'target'], axis=1, inplace=True)
 
         # get each modal
-
+        trn_num, val_num = x_trn[numeric_cols].values, x_val[numeric_cols].values
+        trn_price, val_price = x_trn[price_cols].values, x_val[price_cols].values
+        trn_click, val_click = x_trn[click_cols].values, x_val[click_cols].values
 
         # normalize num
         trn_num_mean = np.mean(trn_num, axis=0)
@@ -126,9 +130,6 @@ def train(train_inputs, params, only_last=False, retrain=False):
         val_price[:, :25] = val_price[:, :25]/(np.max(val_price[:, :25], axis=1)[:, None])
         val_price[:, 25:] = val_price[:, 25:]/(np.max(val_price[:, 25:], axis=1)[:, None])
 
-        y_trn, y_val = targets[trn_mask].values, targets[~trn_mask].values
-        # x_trn.drop('session_id', axis=1, inplace=True)
-        # x_val.drop('session_id', axis=1, inplace=True)
         # data generator
         train_gen = iterate_minibatches(trn_num, trn_price, trn_click, y_trn, batch_size, shuffle=True)
 
@@ -151,8 +152,9 @@ def train(train_inputs, params, only_last=False, retrain=False):
             log_dir = Filepath.tf_logs
             log_filename = ('{0}-batchsize{1}_epochs{2}_nparams_{3}'
                             .format(dt.now().strftime('%m-%d-%H-%M'), batch_size, n_epochs, nparams))
-            tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True, histogram_freq=20,
-                             write_grads=True)
+            # tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True, histogram_freq=20,
+            #                  write_grads=True)
+            tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True, write_grads=True)
             callbacks.append(tb)
             # lr
             lr = LRTensorBoard(log_dir)
@@ -175,9 +177,9 @@ def train(train_inputs, params, only_last=False, retrain=False):
                 step_size = 8 * (len(y_trn) // batch_size)
                 logger.info(f'Using cyclic learning rate with step_size: {step_size}')
                 # clr = CyclicLR(base_lr=params['min_lr'], max_lr=params['max_lr'], step_size=step_size)
-                # clr = CyclicLR(base_lr=params['min_lr'], max_lr=params['max_lr'], step_size=step_size,
-                #                mode='exp_range', gamma=0.99994)
-                # callbacks.append(clr)
+                clr = CyclicLR(base_lr=params['min_lr'], max_lr=params['max_lr'], step_size=step_size,
+                               mode='exp_range', gamma=0.99994)
+                callbacks.append(clr)
 
             history = model.fit_generator(train_gen,
                                           steps_per_epoch=len(y_trn) // batch_size,
@@ -187,43 +189,54 @@ def train(train_inputs, params, only_last=False, retrain=False):
                                           validation_data=([val_num, val_price, val_click], y_val),
                                           validation_steps=len(y_val) // batch_size)
 
-            # make prediction
-            trn_pred = model.predict(x=[trn_num, trn_price, trn_click], batch_size=1024)
-            trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
-            plot_hist(trn_pred_label, y_trn, 'train')
-            confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
-            trn_mrr = np.mean(1 / (trn_pred_label + 1))
+        # make prediction
+        x_trn = train_inputs[trn_mask].reset_index(drop=True)
+        x_trn = x_trn.groupby('session_id').last().reset_index(drop=False)
+        y_trn = x_trn['target'].values
+        x_trn.drop(['session_id', 'target'], axis=1, inplace=True)
+        trn_num = x_trn[numeric_cols].values
+        trn_price = x_trn[price_cols].values
+        trn_click = x_trn[click_cols].values
+        trn_num = (trn_num - trn_num_mean) / trn_num_sd
+        trn_price[:, :25] = trn_price[:, :25] / (np.max(trn_price[:, :25], axis=1)[:, None])
+        trn_price[:, 25:] = trn_price[:, 25:] / (np.max(trn_price[:, 25:], axis=1)[:, None])
 
-            val_pred = model.predict(x=[val_num, val_price, val_click], batch_size=1024)
-            val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
-            plot_hist(val_pred_label, y_val, 'validation')
-            confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
-            val_mrr = np.mean(1 / (val_pred_label + 1))
-            logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')
+        trn_pred = model.predict(x=[trn_num, trn_price, trn_click], batch_size=1024)
+        trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
+        plot_hist(trn_pred_label, y_trn, 'train')
+        confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
+        trn_mrr = np.mean(1 / (trn_pred_label + 1))
 
-            models.append(model)
-            mrrs.append((trn_mrr, val_mrr))
+        val_pred = model.predict(x=[val_num, val_price, val_click], batch_size=1024)
+        val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
+        plot_hist(val_pred_label, y_val, 'validation')
+        confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
+        val_mrr = np.mean(1 / (val_pred_label + 1))
+        logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')
+
+        clfs.append(model)
+        mrrs.append((trn_mrr, val_mrr))
 
     logger.info(f'Total time took: {(time.time()-t_init)/60:.2f} mins')
     return clfs, mrrs
 
 
 if __name__ == '__main__':
-    setup = {'nrows': None,
-             'test_rows': None,
+    setup = {'nrows': 5000000,
              'recompute_train': False,
-             'only_last': False,
+             'add_test': True,
+             'only_last': True,
              'retrain': True,
              'recompute_test': False}
 
     params = {'batch_size': 512,
-              'n_epochs': 1000,
+              'n_epochs': 100,
               'early_stopping_patience': 50,
               'reduce_on_plateau_patience': 30,
               'learning_rate': 0.001,
               'max_lr': 0.005,
               'min_lr': 0.0001,
-              'use_cyc': False,
+              'use_cyc': True,
               'early_stop': False,
               'reduce_on_plateau': False
               }

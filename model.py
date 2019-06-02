@@ -14,31 +14,31 @@ def build_model(dense_act='relu', kernel_initializer='glorot_uniform'):
     # numerics
     numerics_input = Input(shape=(4,), name='numerics_input')
     numerics_dense = Dense(16, activation=dense_act, kernel_initializer=kernel_initializer)(numerics_input)
-    numerics_dense = BatchNormalization()(numerics_dense)
+    # numerics_dense = BatchNormalization()(numerics_dense)
 
     # prices
     prices_input = Input(shape=(50, ), name='prices_input')
-    prices_dense = Dense(units=64, activation=dense_act, kernel_initializer=kernel_initializer,
+    prices_dense = Dense(units=32, activation=dense_act, kernel_initializer=kernel_initializer,
                          name='merged_tcn_dense')(prices_input)
-    prices_dense = BatchNormalization()(prices_dense)
+    # prices_dense = BatchNormalization()(prices_dense)
 
     # clicks
     clicks_input = Input(shape=(100, ), name='clicks_input')
-    clicks_dense = Dense(units=64, activation=dense_act, kernel_initializer=kernel_initializer,
+    clicks_dense = Dense(units=32, activation=dense_act, kernel_initializer=kernel_initializer,
                          name='cfilter_dense1')(clicks_input)
-    clicks_dense = BatchNormalization()(clicks_dense)
+    # clicks_dense = BatchNormalization()(clicks_dense)
 
     # early fusion
     concat1 = concatenate([numerics_input, prices_input, clicks_input])
     concat1 = Dense(units=128, activation=dense_act, kernel_initializer=kernel_initializer)(concat1)
-    concat1 = BatchNormalization()(concat1)
-    concat1 = Dropout(0.2)(concat1)
+    # concat1 = BatchNormalization()(concat1)
+    concat1 = Dropout(0.4)(concat1)
 
     # late fusion
     concat2 = concatenate([concat1, numerics_dense, prices_dense, clicks_dense])
     concat2 = Dense(units=256, activation=dense_act, kernel_initializer=kernel_initializer)(concat2)
-    concat2 = BatchNormalization()(concat2)
-    concat2 = Dropout(0.2)(concat2)
+    # concat2 = BatchNormalization()(concat2)
+    concat2 = Dropout(0.4)(concat2)
 
     # last hidden layer
     h = Dense(units=64, activation=dense_act, kernel_initializer=kernel_initializer)(concat2)

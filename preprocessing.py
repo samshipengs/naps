@@ -6,7 +6,7 @@ import pandas as pd
 from utils import load_data, get_logger, get_data_path, flogger
 
 
-logger = get_logger('preprocess_session')
+logger = get_logger('preprocessing')
 Filepath = get_data_path()
 
 # CONVERT_ACTION_TYPE = True
@@ -39,23 +39,22 @@ def clip_up_to_last_click(grp, mode):
     """
     Clip session records up to last click-out if the session has click-outs, otherwise remove the session
     :param grp: dataframe associated with a group key from groupby
-    :param click_out: str or int, representation of click-out, it's either 0 or 'clickout item' depends on encoding
+    # :param click_out: str or int, representation of click-out, it's either 0 or 'clickout item' depends on encoding
     :param mode: str, 'train' or 'test'
     :return: clipped dataframe
     """
-    # print('='*30, mode)
     if mode == 'train':
         # in train mode, we go up to the last non-null reference click-outs, this is necessary especially when we try
         # to make use of test data (except the last row)
         check = (grp['action_type'].values == 'clickout item') & (pd.notna(grp['reference'].values))
     elif mode == 'test':
-        check = grp['action_type'].values == 'clickout item'
+        check = (grp['action_type'].values == 'clickout item') & (pd.isna(grp['reference'].values))
     else:
         raise ValueError('Invalid mode')
 
     if np.sum(check) != 0:
-        # if there is click-out
         return grp.iloc[:np.argwhere(check)[-1][0]+1]
+
     else:
         # else drop the df
         return pd.DataFrame()
@@ -79,13 +78,23 @@ def filter_and_check(grp, mode):
     elif mode == 'test':
         # test should have the last reference as nan for click-out
         has_ref = ((grp['action_type'].iloc[-1] == 'clickout item') &
-                   (grp.iloc[-1][['reference']].isna()))
+                   (pd.isna(grp.iloc[-1]['reference'])))
     else:
         raise ValueError('Invalid mode')
     return has_clickout & has_ref
 
 
 def basic_preprocess_sessions(df, mode, nrows, drop_duplicates=True, save=True, recompute=False):
+    """
+    Trigger the whole basic processing steps
+    :param df: raw dataframe
+    :param mode: 'train' or 'test'
+    :param nrows: number of rows that was used to the input df
+    :param drop_duplicates: whether drop duplicated rows (i.e. all same except step)
+    :param save:
+    :param recompute:
+    :return: basic cleaned dataframe
+    """
     filepath = Filepath.gbm_cache_path
     filename = os.path.join(filepath, f'basic_preprocessed_{mode}_{nrows}.snappy')
 
@@ -165,10 +174,10 @@ def preprocess_data(mode, nrows=None, add_test=True, recompute=False):
             df = load_data(mode)
             flogger(df, 'Load test with only what ids needed for submissions')
             # load  only the test that we need to submit
-            required_sids = load_data('submission_popular', use_cols=['session_id'])['session_id'].unique()
+            required_sids = load_data('submission_popular', usecols=['session_id'])['session_id'].unique()
             df = df[df['session_id'].isin(required_sids)].reset_index(drop=True)
             logger.info(f'Rows of raw data that is required for test submission is: {len(df):,} '
-                        f'for {len(required_sids)} unique sessions')
+                        f'for {len(required_sids):,} unique sessions')
 
         flogger(df, f'raw {mode}')
 

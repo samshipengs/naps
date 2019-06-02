@@ -395,8 +395,8 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
 
 
 if __name__ == '__main__':
-    args = {'mode': 'train',
-            'nrows': 100000,
+    args = {'mode': 'test',
+            'nrows': None,
             'add_test': False,
             'padding_value': np.nan,
             'recompute': True}

@@ -5,20 +5,20 @@ import numpy as np
 from datetime import datetime as dt
 from ast import literal_eval
 
-from sklearn.model_selection import StratifiedKFold, KFold
+from sklearn.model_selection import KFold
 from keras import backend as K
 from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
 from keras.utils import plot_model
 from keras.models import load_model
 from model import build_model
 from create_model_inputs import create_model_inputs
-from utils import get_logger, get_data_path, check_gpu
-from plots import plot_hist, confusion_matrix, plot_imp_cat
+from utils import get_logger, get_data_path
+from plots import plot_hist, confusion_matrix
 
 
 logger = get_logger('train_model')
 Filepath = get_data_path()
-
+RS = 42
 
 class LoggingCallback(Callback):
     """Callback that logs message at end of epoch.
@@ -64,48 +64,55 @@ def iterate_minibatches(numerics, prices, clicks, targets, batch_size, shuffle=T
 
 
 def train(train_inputs, params, only_last=False, retrain=False):
-    # temp
-    train_ids = np.load('./gbm_cache/train_ids.npy')
-    train_inputs['session_id'] = train_ids
-    if only_last:
-        logger.info('Training ONLY with last row')
-        # temp
-        train_inputs = train_inputs.groupby('session_id').last().reset_index(drop=False)
-
-    uids = train_inputs['session_id'].unique()
+    # path to where model is saved
     model_path = Filepath.model_path
 
-    targets = train_inputs['target']
-    train_inputs.drop('target', axis=1, inplace=True)
+    # if only use the last row of train_inputs to train
+    if only_last:
+        logger.info('Training ONLY with last row')
+        train_inputs = train_inputs.groupby('session_id').last().reset_index(drop=False)
 
-    # kf = StratifiedKFold(n_splits=6)
-    kf = KFold(n_splits=5, shuffle=True)
+    # grab unique session ids and use this to split, so that train_inputs with same session_id do not spread to both
+    # train and valid
+    unique_session_ids = train_inputs['session_id'].unique()
+
+    kf = KFold(n_splits=5, shuffle=True, random_state=RS)
+
+    # fill nans
+    train_inputs.fillna(0, inplace=True)
 
     numeric_cols = ['last_duration', 'n_imps', 'session_duration', 'session_size']
     price_cols = [c for c in train_inputs.columns if 'price' in c]
     click_cols = [c for c in train_inputs.columns if 'click' in c or 'interact' in c]
     cf_cols = [c for c in train_inputs.columns if 'filter' in c]
-    # drop cf for now
-    train_inputs.fillna(0, inplace=True)
+    # drop cf col for now
     train_inputs.drop(cf_cols, axis=1, inplace=True)
 
     batch_size = params['batch_size']
     n_epochs = params['n_epochs']
+    # record classifiers and mrr each training
     clfs = []
     mrrs = []
     t_init = time.time()
-    # for fold, (trn_ind, val_ind) in enumerate(skf.split(targets, targets)):
-    for fold, (trn_ind, val_ind) in enumerate(kf.split(uids)):
+    for fold, (trn_ind, val_ind) in enumerate(kf.split(unique_session_ids)):
         logger.info(f'Training fold {fold}: train len={len(trn_ind):,} | val len={len(val_ind):,}')
-
-        trn_ids = train_ids[trn_ind]
+        # get session_id used for train
+        trn_ids = unique_session_ids[trn_ind]
         trn_mask = train_inputs['session_id'].isin(trn_ids)
-        trn_num, val_num = train_inputs.loc[trn_mask, numeric_cols].values, \
-                           train_inputs.loc[~trn_mask, numeric_cols].values
-        trn_click, val_click = train_inputs.loc[trn_mask, click_cols].values, \
-                           train_inputs.loc[~trn_mask, click_cols].values
-        trn_price, val_price = train_inputs.loc[trn_mask, price_cols].values, \
-                           train_inputs.loc[~trn_mask, price_cols].values
+
+        x_trn, x_val = (train_inputs[trn_mask].reset_index(drop=True),
+                        train_inputs[~trn_mask].reset_index(drop=True))
+
+        # for validation only last row is needed
+        x_val = x_val.groupby('session_id').last().reset_index(drop=False)
+
+        # get target
+        y_trn, y_val = x_trn['target'].values, x_val['target'].values
+        x_trn.drop(['session_id', 'target'], axis=1, inplace=True)
+        x_val.drop(['session_id', 'target'], axis=1, inplace=True)
+
+        # get each modal
+
 
         # normalize num
         trn_num_mean = np.mean(trn_num, axis=0)

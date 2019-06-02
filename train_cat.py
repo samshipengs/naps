@@ -15,6 +15,8 @@ from plots import plot_hist, confusion_matrix, plot_imp_cat
 
 logger = get_logger('train_model')
 Filepath = get_data_path()
+# random splitting for cross-validation
+RS = 42
 
 
 def train(train_inputs, params, only_last=False, retrain=False):
@@ -30,12 +32,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
     # train and valid
     unique_session_ids = train_inputs['session_id'].unique()
 
-    # get target
-    targets = train_inputs['target']
-    train_inputs.drop('target', axis=1, inplace=True)
-
-    # kf = StratifiedKFold(n_splits=6)
-    kf = KFold(n_splits=5, shuffle=True)
+    kf = KFold(n_splits=5, shuffle=True, random_state=RS)
 
     # record classifiers and mrr each training
     clfs = []
@@ -50,11 +47,13 @@ def train(train_inputs, params, only_last=False, retrain=False):
         x_trn, x_val = (train_inputs[trn_mask].reset_index(drop=True),
                         train_inputs[~trn_mask].reset_index(drop=True))
 
-        y_trn, y_val = targets[trn_mask].values, targets[~trn_mask].values
-        x_trn.drop('session_id', axis=1, inplace=True)
         # for validation only last row is needed
         x_val = x_val.groupby('session_id').last().reset_index(drop=False)
-        x_val.drop('session_id', axis=1, inplace=True)
+
+        # get target
+        y_trn, y_val = x_trn['target'].values, x_val['target'].values
+        x_trn.drop(['session_id', 'target'], axis=1, inplace=True)
+        x_val.drop(['session_id', 'target'], axis=1, inplace=True)
 
         # =====================================================================================
         # create model
@@ -78,6 +77,11 @@ def train(train_inputs, params, only_last=False, retrain=False):
             clf.save_model(model_filename)
 
         # make prediction
+        x_trn = train_inputs[trn_mask].reset_index(drop=True)
+        x_trn = x_trn.groupby('session_id').last().reset_index(drop=False)
+        y_trn = x_trn['target'].values
+        x_trn.drop(['session_id', 'target'], axis=1, inplace=True)
+
         trn_pred = clf.predict_proba(x_trn)
         trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
         plot_hist(trn_pred_label, y_trn, 'train')
@@ -99,12 +103,12 @@ def train(train_inputs, params, only_last=False, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': None,
-             'test_rows': None,
+    setup = {'nrows': 5000000,
              'recompute_train': False,
+             'add_test': True,
              'only_last': False,
-             'retrain': True,
-             'recompute_test': False}
+             'retrain': False,
+             'recompute_test': True}
 
     device = 'GPU' if check_gpu() else 'CPU'
     params = {'loss_function': 'MultiClass',
@@ -121,14 +125,13 @@ if __name__ == '__main__':
 
     # first create training inputs
     train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], padding_value=np.nan,
-                                       recompute=setup['recompute_train'])
+                                       add_test=setup['add_test'], recompute=setup['recompute_train'])
     # train the model
     models, mrrs = train(train_inputs, params=params, only_last=setup['only_last'], retrain=setup['retrain'])
     train_mrr = np.mean([mrr[0] for mrr in mrrs])
     val_mrr = np.mean([mrr[1] for mrr in mrrs])
     # get the test inputs
-    test_inputs = create_model_inputs(mode='test', nrows=setup['test_rows'], padding_value=np.nan,
-                                      recompute=setup['recompute_test'])
+    test_inputs = create_model_inputs(mode='test', padding_value=np.nan, recompute=setup['recompute_test'])
 
     # make predictions on test
     logger.info('Load test sub csv')

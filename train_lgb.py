@@ -76,7 +76,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
                             lgb_trn_data,
                             valid_sets=[lgb_trn_data, lgb_val_data],
                             valid_names=['train', 'val'],
-                            init_model=lgb.Booster(model_file=model_filename),
+                            #init_model=lgb.Booster(model_file=model_filename),
                             verbose_eval=100)
             # grab feature importances
             imp_df = pd.DataFrame()
@@ -118,7 +118,7 @@ if __name__ == '__main__':
              'recompute_train': False,
              'add_test': True,
              'only_last': False,
-             'retrain': False,
+             'retrain': True,
              'recompute_test': True}
 
     params = {'boosting': 'gbdt',  # gbdt, dart, goss

@@ -222,7 +222,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 5000000,
+    setup = {'nrows': None,
              'recompute_train': False,
              'add_test': True,
              'only_last': True,

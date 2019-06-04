@@ -39,10 +39,11 @@ def train(train_inputs, params, only_last=False, retrain=False):
     mrrs = []
     t_init = time.time()
     for fold, (trn_ind, val_ind) in enumerate(kf.split(unique_session_ids)):
-        logger.info(f'Training fold {fold}: train len={len(trn_ind):,} | val len={len(val_ind):,}')
+        logger.info(f'Training fold {fold}: train ids len={len(trn_ind):,} | val ids len={len(val_ind):,}')
         # get session_id used for train
         trn_ids = unique_session_ids[trn_ind]
         trn_mask = train_inputs['session_id'].isin(trn_ids)
+        logger.info(f'Training fold {fold}: train len={trn_mask.sum():,} | val ids len={(~trn_mask).sum():,}')
 
         x_trn, x_val = (train_inputs[trn_mask].reset_index(drop=True),
                         train_inputs[~trn_mask].reset_index(drop=True))
@@ -103,12 +104,12 @@ def train(train_inputs, params, only_last=False, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 5000000,
+    setup = {'nrows': None,
              'recompute_train': False,
              'add_test': True,
              'only_last': False,
-             'retrain': False,
-             'recompute_test': True}
+             'retrain': True,
+             'recompute_test': False}
 
     device = 'GPU' if check_gpu() else 'CPU'
     params = {'loss_function': 'MultiClass',
@@ -169,6 +170,6 @@ if __name__ == '__main__':
     test_sub.rename(columns={'recommendations': 'item_recommendations'}, inplace=True)
     test_sub = test_sub[sub_columns]
     current_time = dt.now().strftime('%m-%d-%H-%M')
-    test_sub.to_csv(os.path.join(Filepath.sub_path, f'cat_sub_{current_time}_{train_mrr}_{val_mrr}.csv'), index=False)
+    test_sub.to_csv(os.path.join(Filepath.sub_path, f'cat_sub_{current_time}_{train_mrr:.4f}_{val_mrr:.4f}.csv'), index=False)
     logger.info('Done all')
 

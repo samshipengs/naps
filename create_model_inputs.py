@@ -206,7 +206,7 @@ def compute_session_fts(df, nprocs=None):
     t1 = time.time()
     if nprocs is None:
         nprocs = mp.cpu_count() - 1
-        # nprocs = 1
+        nprocs = 2
         logger.info('Using {} cores'.format(nprocs))
 
     # get all session ids
@@ -258,9 +258,9 @@ def expand(df, col):
 
 
 def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, recompute=False):
-    nrows_ = nrows if nrows is not None else 15932993
+    nrows = nrows if nrows is not None else 15932993
     add_test_str = 'test_added' if add_test else 'no_test_added'
-    logger.info(f"\n{'='*10} Creating {mode.upper()} model inputs with {nrows_:,} rows, "
+    logger.info(f"\n{'='*10} Creating {mode.upper()} model inputs with {nrows:,} rows, "
                 f"{add_test_str} and recompute={recompute} {'='*10}")
     filename = os.path.join(Filepath.gbm_cache_path, f'{mode}_inputs_{nrows}_{add_test_str}.snappy')
 

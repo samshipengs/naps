@@ -10,7 +10,8 @@ logger = get_logger('preprocessing')
 Filepath = get_data_path()
 
 # CONVERT_ACTION_TYPE = True
-USE_COLS = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters', 'reference', 'impressions', 'prices']
+USE_COLS = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters', 'reference', 'impressions', 'prices',
+            'country', 'device', 'platform']
 
 
 # 0)
@@ -129,7 +130,7 @@ def basic_preprocess_sessions(df, mode, nrows, drop_duplicates=True, save=True, 
     return df
 
 
-def create_action_type_mapping(recompute=False):
+def create_action_type_mapping(group=True, recompute=False):
     filepath = Filepath.gbm_cache_path
     filename = os.path.join(filepath, 'action_types_mapping.npy')
 
@@ -138,17 +139,83 @@ def create_action_type_mapping(recompute=False):
         action_type2natural = np.load(filename).item()
         n_unique_actions = len(action_type2natural)
     else:
-        # hardcoded, each action will be represented as the index in following list
-        # e.g. clickout item -> 0
-        actions = ['clickout item', 'search for poi', 'interaction item image',
-                   'interaction item info', 'interaction item deals',
-                   'search for destination', 'filter selection',
-                   'interaction item rating', 'search for item',
-                   'change of sort order']
-        action_type2natural = {v: k for k, v in enumerate(actions)}
-        n_unique_actions = len(actions)
+
+        if group:
+            action_type2natural = {'clickout item': 0,
+                                   'search for poi': 1,
+                                   'search for destination': 1,
+                                   'search for item': 2,
+                                   'interaction item image': 2,
+                                   'interaction item info': 2,
+                                   'interaction item deals': 2,
+                                   'interaction item rating': 2,
+                                   'filter selection': 3,
+                                   'change of sort order': 3}
+            n_unique_actions = 4
+        else:
+            # hardcoded, each action will be represented as the index in following list
+            # e.g. clickout item -> 0
+            actions = ['clickout item', 'search for poi', 'interaction item image',
+                       'interaction item info', 'interaction item deals',
+                       'search for destination', 'filter selection',
+                       'interaction item rating', 'search for item',
+                       'change of sort order']
+            action_type2natural = {v: k for k, v in enumerate(actions)}
+            n_unique_actions = len(actions)
         np.save(filename, action_type2natural)
     return action_type2natural, n_unique_actions
+
+
+def city2country(df, recompute=False):
+    logger.info('Extract country info from city column and then drop city column')
+    df['country'] = df['city'].str.extract(r', (.+)')
+    df.drop('city', axis=1, inplace=True)
+
+    filepath = Filepath.gbm_cache_path
+    filename = os.path.join(filepath, 'country_mapping.npy')
+
+    # then mapper to int
+    if os.path.isfile(filename) and not recompute:
+        logger.info(f'Load country mapping from existing: {filename}')
+        countries_mapping = np.load(filename).item()
+    else:
+        unique_countries = df['country'].unique()
+        countries_mapping = {v: k for k, v in enumerate(unique_countries)}
+
+    df['country'] = df['country'].map(countries_mapping)
+    return df
+
+
+def platform2int(df, recompute=False):
+    logger.info('Converting platform to int')
+    filepath = Filepath.gbm_cache_path
+    filename = os.path.join(filepath, 'platform_mapping.npy')
+
+    # then mapper to int
+    if os.path.isfile(filename) and not recompute:
+        logger.info(f'Load platform_mapping from existing: {filename}')
+        platform_mapping = np.load(filename).item()
+    else:
+        plats = df['platform'].unique()
+        platform_mapping = {v: k for k, v in enumerate(plats)}
+    df['platform'] = df['platform'].map(platform_mapping)
+    return df
+
+
+def device2int(df, recompute=False):
+    logger.info('Converting device to int')
+    filepath = Filepath.gbm_cache_path
+    filename = os.path.join(filepath, 'device_mapping.npy')
+
+    # then mapper to int
+    if os.path.isfile(filename) and not recompute:
+        logger.info(f'Load device_mapping from existing: {filename}')
+        device_mapping = np.load(filename).item()
+    else:
+        devices = df['device'].unique()
+        device_mapping = {v: k for k, v in enumerate(devices)}
+    df['device'] = df['device'].map(device_mapping)
+    return df
 
 
 def preprocess_data(mode, nrows=None, add_test=True, recompute=False):
@@ -191,6 +258,10 @@ def preprocess_data(mode, nrows=None, add_test=True, recompute=False):
 
         # get time and select columns that get used
         df['timestamp'] = df['timestamp'].apply(lambda ts: datetime.datetime.utcfromtimestamp(ts))
+        # get country, device, platform transformed
+        df = city2country(df, recompute=False)
+        df = device2int(df, recompute=False)
+        df = platform2int(df, recompute=False)
         df = df[USE_COLS]
 
         logger.info('Sort df by session_id, timestamp, step')

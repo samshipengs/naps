@@ -335,6 +335,12 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         df['prices'] = df['prices'].apply(lambda x: [float(p) for p in x])
         logger.info('Add price rank')
 
+        def normalize(ps):
+            p_arr = np.array(ps)
+            return p_arr / (p_arr.max())
+        # normalize within
+        df['prices_percentage'] = df['prices'].apply(normalize)
+
         def _rank_price(prices_row):
             ranks = rankdata(prices_row, method='dense')
             return ranks / (ranks.max())

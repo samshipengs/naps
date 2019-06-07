@@ -72,9 +72,9 @@ def create_cfs_mapping(select_n_filters=32, recompute=False):
         tt = pd.concat([train, test], axis=0, ignore_index=True)
         del train, test
         gc.collect()
+        tt = tt.dropna(subset=['current_filters']).reset_index(drop=True)
         tt['current_filters'] = tt['current_filters'].str.lower()
         tt['current_filters'] = tt['current_filters'].str.split('|')
-        tt.dropna(subset=['current_filters'], inplace=True)
         cfs = np.concatenate(tt['current_filters'].values)
         cfs_ctn = pd.value_counts(cfs, normalize=True) * 100
         # choose the top 32
@@ -136,7 +136,7 @@ _, n_unique_actions = create_action_type_mapping(group=True, recompute=False)
 def compute_session_func(grp):
     """
     Main working function to compute features or shaping data
-    :param grp: dataframe associated with a group key (session_id) from grouby
+    :param grp: dataframe associated with a group key (session_id) from groupby
     :return: dataframe with feature columns
     """
     df = grp.copy()
@@ -148,14 +148,16 @@ def compute_session_func(grp):
 
     # get successive time difference
     df['last_duration'] = df['timestamp'].diff().dt.total_seconds()
-    df['last_duration'] = df['last_duration'].fillna(0)
-    df.drop('timestamp', axis=1, inplace=True)
+    # maybe we dont fillna with 0 as it could be implying a very short time interval
+    # df['last_duration'] = df['last_duration'].fillna(0)
+    df = df.drop('timestamp', axis=1).reset_index(drop=True)
 
-    # get action type info of last previous row
+    # get action type info of last previous row (clickout, search for, interaction, feature selection, change of sort)
     action_cols = ['co', 'search', 'inter', 'fs', 'cs']
     action_types = pd.DataFrame(np.eye(n_unique_actions, dtype=int)[df['action_type'].values],
                                 columns=action_cols, index=df.index)
     df = pd.concat([df, action_types], axis=1)
+    # grab the actual value of the filter_selection and sort_order
     df['fs'] = df['fs'] * df['filter_selection']
     df['cs'] = df['cs'] * df['sort_order']
     # shift down
@@ -170,48 +172,49 @@ def compute_session_func(grp):
     click_out_mask = df['action_type'] == 0  # 0 is the hard-coded encoding for clickout item
     df.drop('action_type', axis=1, inplace=True)
     other_mask = ~click_out_mask
-    prev_click_cols = [f'prev_click{i}' for i in range(len(unique_items))]
-    prev_interact_cols = [f'prev_interact{i}' for i in range(len(unique_items))]
+    click_cols = [f'click_{i}' for i in range(len(unique_items))]
+    interact_cols = [f'interact_{i}' for i in range(len(unique_items))]
 
-    prev_click_df = pd.DataFrame(np.eye(len(unique_items), dtype=int)[df[click_out_mask]['reference_natural'].values],
-                                 columns=prev_click_cols, index=df[click_out_mask].index)
-
-    prev_interact_df = pd.DataFrame(np.eye(len(unique_items), dtype=int)[df[other_mask]['reference_natural'].values],
-                                    columns=prev_interact_cols, index=df[other_mask].index)
-    df = pd.concat([df, prev_click_df, prev_interact_df], axis=1)
+    # create clickout binary encoded dataframe
+    click_df = pd.DataFrame(np.eye(len(unique_items), dtype=int)[df[click_out_mask]['reference_natural'].values],
+                            columns=click_cols, index=df[click_out_mask].index)
+    # create everything else except clickout
+    interact_df = pd.DataFrame(np.eye(len(unique_items), dtype=int)[df[other_mask]['reference_natural'].values],
+                               columns=interact_cols, index=df[other_mask].index)
+    df = pd.concat([df, click_df, interact_df], axis=1)
     df.drop('reference_natural', axis=1, inplace=True)
 
     # first get all previous clicks, and others
     df_temp = df.copy()
     df_temp.fillna(0, inplace=True)  # we need to fillna otherwise the cumsum would not compute on row with nan value
-    prev_click_df = df_temp[prev_click_cols].shift(1).cumsum()
-    prev_interact_df = df_temp[prev_interact_cols].shift(1).cumsum()
-    # del df_temp
-    # gc.collect()
+    prev_click_df = df_temp[click_cols].shift(1).cumsum()
+    prev_interact_df = df_temp[interact_cols].shift(1).cumsum()
+
+    # now we need to get the last row clickout and interaction
     # fillna for grabing the last info (cannot ffill in the beginning as it will create extra sum in cumsum)
     df.fillna(method='ffill', inplace=True)
     # get last one
-    last_click = df[prev_click_cols].shift(1)
+    last_click = df[click_cols].shift(1)
     # name last ones
-    last_click.columns = [f'last_click{i}' for i in range(len(unique_items))]
-    last_interact = df[prev_interact_cols].shift(1)
-    df.drop(prev_click_cols+prev_interact_cols, axis=1, inplace=True)
+    last_click.columns = [f'last_click_{i}' for i in range(len(unique_items))]
+    last_interact = df[interact_cols].shift(1)
+    # df.drop(click_cols + interact_cols, axis=1, inplace=True)
     # name last ones
-    last_interact.columns = [f'last_interact{i}' for i in range(len(unique_items))]
+    last_interact.columns = [f'last_interact_{i}' for i in range(len(unique_items))]
 
     # concat all
     df = pd.concat([df, last_click, prev_click_df, last_interact, prev_interact_df], axis=1)
     # only need click-out rows now
     df = df[click_out_mask].reset_index(drop=True)
-    df.fillna(0, inplace=True)
+    # df.fillna(0, inplace=True) # if no good reason to fillna with 0, keep it commented out
 
-    # now actually match the corresponding ones
+    # now select only the ones that is needed for each row
     def match(row, cols):
         impressions_natural = [temp_mapping[imp] for imp in row['impressions']]
         return row[cols].values[impressions_natural]
 
-    iter_cols = {'last_click': last_click.columns, 'prev_click': prev_click_cols,
-                 'last_interact': last_interact.columns, 'prev_interact': prev_interact_cols}
+    iter_cols = {'last_click': last_click.columns, 'prev_click': click_cols,
+                 'last_interact': last_interact.columns, 'prev_interact': interact_cols}
     for k, v in iter_cols.items():
         func = partial(match, cols=v)
         df[k] = df.apply(func, axis=1)
@@ -251,7 +254,7 @@ def compute_session_fts(df, nprocs=None):
     t1 = time.time()
     if nprocs is None:
         nprocs = mp.cpu_count() - 1
-        nprocs = 2
+        # nprocs = 2
         logger.info('Using {} cores'.format(nprocs))
 
     # get all session ids

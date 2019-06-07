@@ -9,7 +9,6 @@ from utils import load_data, get_logger, get_data_path, flogger
 logger = get_logger('preprocessing')
 Filepath = get_data_path()
 
-CONVERT_ACTION_TYPE = True
 USE_COLS = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters', 'reference', 'impressions', 'prices',
             'country', 'device', 'platform']
 
@@ -85,14 +84,12 @@ def filter_and_check(grp, mode):
     return has_clickout & has_ref
 
 
-def basic_preprocess_sessions(df, mode, nrows, drop_duplicates=True, save=True, recompute=False):
+def basic_preprocess_sessions(df, mode, nrows, recompute=False):
     """
     Trigger the whole basic processing steps
     :param df: raw dataframe
     :param mode: 'train' or 'test'
     :param nrows: number of rows that was used to the input df
-    :param drop_duplicates: whether drop duplicated rows (i.e. all same except step)
-    :param save:
     :param recompute:
     :return: basic cleaned dataframe
     """
@@ -104,12 +101,9 @@ def basic_preprocess_sessions(df, mode, nrows, drop_duplicates=True, save=True, 
         df = pd.read_parquet(filename)
     else:
         # 0) drop duplicates
-        if drop_duplicates:
-            df = remove_duplicates(df)
+        df = remove_duplicates(df)
         # 1) clipping to last click-out if any
         logger.info('Clipping session dataframe up to last click out (if there is clickout)')
-        # clickout = 0 if CONVERT_ACTION_TYPE else 'clickout item'
-        # clip_up_to_last_click_ = partial(clip_up_to_last_click, click_out=clickout, mode=mode)
         clip_up_to_last_click_ = partial(clip_up_to_last_click, mode=mode)
         df = df.groupby('session_id').apply(clip_up_to_last_click_).reset_index(drop=True)
 
@@ -120,13 +114,8 @@ def basic_preprocess_sessions(df, mode, nrows, drop_duplicates=True, save=True, 
         # if one right, there should be no invalid sessions at this point
         invalid_session_count = (~valid_clicked).sum()
         assert invalid_session_count == 0, f'There are {invalid_session_count} invalid sessions'
-        # grab the invalid session ids and filter
-        click_session_ids = valid_clicked[valid_clicked].index
-        df = df[df['session_id'].isin(click_session_ids)].reset_index(drop=True)
-        logger.info(f'{mode} length after selecting: {len(df):,}')
-        if save:
-            logger.info(f'Saving {filename}')
-            df.to_parquet(filename)
+        logger.info(f'Saving {filename}')
+        df.to_parquet(filename)
     return df
 
 
@@ -170,7 +159,7 @@ def city2country(df, recompute=False):
     logger.info('Extract country info from city column and then drop city column')
     df['country'] = df['city'].str.extract(r', (.+)')
     df.drop('city', axis=1, inplace=True)
-
+    print('\n\n', df.columns, df.head())
     filepath = Filepath.gbm_cache_path
     filename = os.path.join(filepath, 'country_mapping.npy')
 
@@ -248,13 +237,12 @@ def preprocess_data(mode, nrows=None, add_test=True, recompute=False):
 
         flogger(df, f'raw {mode}')
 
-        # if CONVERT_ACTION_TYPE:
         logger.info('Converting action_types to int (natural number)')
         action_type2natural, _ = create_action_type_mapping(recompute=False)
         df['action_type'] = df['action_type'].map(action_type2natural)
 
         # basic pre-process data i.e. dropping duplicates, only take sessions with clicks and clip to last click out
-        df = basic_preprocess_sessions(df, mode=mode, nrows=nrows, drop_duplicates=True, save=True, recompute=recompute)
+        df = basic_preprocess_sessions(df, mode=mode, nrows=nrows, recompute=recompute)
         df['action_type'] = df['action_type'].astype(int)
 
         # get time and select columns that get used
@@ -264,9 +252,16 @@ def preprocess_data(mode, nrows=None, add_test=True, recompute=False):
         df = device2int(df, recompute=False)
         df = platform2int(df, recompute=False)
         df = df[USE_COLS]
-        print(df['action_type'].head())
+        print(df.head())
 
-        logger.info('Sort df by session_id, timestamp, step')
-        df = df.sort_values(by=['session_id', 'timestamp', 'step']).reset_index(drop=True)
+        # logger.info('Sort df by session_id, timestamp, step')
+        # df = df.sort_values(by=['session_id', 'timestamp', 'step']).reset_index(drop=True)
         df.to_parquet(filename)
     return df
+
+
+if __name__ == '__main__':
+    mode = 'train'
+    nrows = 1000000
+    add_test = False
+    preprocess_data(mode, nrows=nrows, add_test=add_test, recompute=True)

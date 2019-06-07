@@ -22,6 +22,9 @@ RS = 42
 def train(train_inputs, params, only_last=False, retrain=False):
     # path to where model is saved
     model_path = Filepath.model_path
+    cf_cols = [c for c in train_inputs.columns if 'current_filters' in c]
+    # drop cf col for now
+    train_inputs.drop(cf_cols, axis=1, inplace=True)
 
     # if only use the last row of train_inputs to train
     if only_last:
@@ -56,6 +59,9 @@ def train(train_inputs, params, only_last=False, retrain=False):
         x_trn.drop(['session_id', 'target'], axis=1, inplace=True)
         x_val.drop(['session_id', 'target'], axis=1, inplace=True)
 
+        # get categorical index
+        cat_cols = ['country', 'device', 'platform', 'fs', 'cs']
+        cat_ind = [k for k, v in enumerate(x_trn.columns) if v in cat_cols]
         # =====================================================================================
         # create model
         model_filename = os.path.join(model_path, f'cat_cv{fold}.model')
@@ -68,6 +74,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
             # train model
             clf = cat.CatBoostClassifier(**params)
             clf.fit(x_trn, y_trn,
+                    cat_features=cat_ind,
                     eval_set=(x_val, y_val),
                     early_stopping_rounds=100,
                     verbose=100,
@@ -107,7 +114,7 @@ if __name__ == '__main__':
     setup = {'nrows': None,
              'recompute_train': False,
              'add_test': True,
-             'only_last': False,
+             'only_last': True,
              'retrain': True,
              'recompute_test': False}
 
@@ -117,8 +124,8 @@ if __name__ == '__main__':
               'eval_metric': 'MultiClass',
               'iterations': 10000,
               'learning_rate': 0.02,
-              'depth': 8,
-              'min_data_in_leaf': 2,
+              # 'depth': 8,
+              # 'min_data_in_leaf': 2,
               'task_type': device}
 
     logger.info(f"\nSetup\n{'='*20}\n{setup}\n{'='*20}")

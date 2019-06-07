@@ -9,7 +9,7 @@ from utils import load_data, get_logger, get_data_path, flogger
 logger = get_logger('preprocessing')
 Filepath = get_data_path()
 
-# CONVERT_ACTION_TYPE = True
+CONVERT_ACTION_TYPE = True
 USE_COLS = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters', 'reference', 'impressions', 'prices',
             'country', 'device', 'platform']
 
@@ -47,9 +47,9 @@ def clip_up_to_last_click(grp, mode):
     if mode == 'train':
         # in train mode, we go up to the last non-null reference click-outs, this is necessary especially when we try
         # to make use of test data (except the last row)
-        check = (grp['action_type'].values == 'clickout item') & (pd.notna(grp['reference'].values))
+        check = (grp['action_type'].values == 0) & (pd.notna(grp['reference'].values))
     elif mode == 'test':
-        check = (grp['action_type'].values == 'clickout item') & (pd.isna(grp['reference'].values))
+        check = (grp['action_type'].values == 0) & (pd.isna(grp['reference'].values))
     else:
         raise ValueError('Invalid mode')
 
@@ -71,14 +71,14 @@ def filter_and_check(grp, mode):
     :return: a boolean mask that indicates the valid sessions
     """
     # sessions has clickouts
-    has_clickout = (grp['action_type'].values == 'clickout item').sum() != 0
+    has_clickout = (grp['action_type'].values == 0).sum() != 0
     if mode == 'train':
         # last row has reference and it's not nan
-        has_ref = ((grp['action_type'].iloc[-1] == 'clickout item') &
+        has_ref = ((grp['action_type'].iloc[-1] == 0) &
                    (grp.iloc[-1][['impressions', 'reference', 'prices']].isna().sum() == 0))
     elif mode == 'test':
         # test should have the last reference as nan for click-out
-        has_ref = ((grp['action_type'].iloc[-1] == 'clickout item') &
+        has_ref = ((grp['action_type'].iloc[-1] == 0) &
                    (pd.isna(grp.iloc[-1]['reference'])))
     else:
         raise ValueError('Invalid mode')
@@ -150,8 +150,8 @@ def create_action_type_mapping(group=True, recompute=False):
                                    'interaction item deals': 2,
                                    'interaction item rating': 2,
                                    'filter selection': 3,
-                                   'change of sort order': 3}
-            n_unique_actions = 4
+                                   'change of sort order': 4}
+            n_unique_actions = len(set(action_type2natural.values()))
         else:
             # hardcoded, each action will be represented as the index in following list
             # e.g. clickout item -> 0
@@ -221,7 +221,7 @@ def device2int(df, recompute=False):
 def preprocess_data(mode, nrows=None, add_test=True, recompute=False):
     nrows_str = 'all' if nrows is None else nrows
     add_test_str = 'test_added' if add_test else 'no_test_added'
-    filename = os.path.join(Filepath.gbm_cache_path, f'{mode}_{nrows_str}_{add_test_str}.snappy')
+    filename = os.path.join(Filepath.gbm_cache_path, f'preprocess_{mode}_{nrows_str}_{add_test_str}.snappy')
 
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load from existing {filename}')
@@ -249,12 +249,13 @@ def preprocess_data(mode, nrows=None, add_test=True, recompute=False):
         flogger(df, f'raw {mode}')
 
         # if CONVERT_ACTION_TYPE:
-        #     logger.info('Converting action_types to int (natural number)')
-        #     action_type2natural, _ = create_action_type_mapping(recompute=False)
-        #     df['action_type'] = df['action_type'].map(action_type2natural)
+        logger.info('Converting action_types to int (natural number)')
+        action_type2natural, _ = create_action_type_mapping(recompute=False)
+        df['action_type'] = df['action_type'].map(action_type2natural)
 
         # basic pre-process data i.e. dropping duplicates, only take sessions with clicks and clip to last click out
         df = basic_preprocess_sessions(df, mode=mode, nrows=nrows, drop_duplicates=True, save=True, recompute=recompute)
+        df['action_type'] = df['action_type'].astype(int)
 
         # get time and select columns that get used
         df['timestamp'] = df['timestamp'].apply(lambda ts: datetime.datetime.utcfromtimestamp(ts))
@@ -263,6 +264,7 @@ def preprocess_data(mode, nrows=None, add_test=True, recompute=False):
         df = device2int(df, recompute=False)
         df = platform2int(df, recompute=False)
         df = df[USE_COLS]
+        print(df['action_type'].head())
 
         logger.info('Sort df by session_id, timestamp, step')
         df = df.sort_values(by=['session_id', 'timestamp', 'step']).reset_index(drop=True)

@@ -126,7 +126,7 @@ def create_action_type_mapping(group=True, recompute=False):
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load action_types mapping from existing: {filename}')
         action_type2natural = np.load(filename).item()
-        n_unique_actions = len(action_type2natural)
+        n_unique_actions = len(set(action_type2natural.values()))
     else:
 
         if group:
@@ -238,7 +238,7 @@ def preprocess_data(mode, nrows=None, add_test=True, recompute=False):
         flogger(df, f'raw {mode}')
 
         logger.info('Converting action_types to int (natural number)')
-        action_type2natural, _ = create_action_type_mapping(recompute=False)
+        action_type2natural, _ = create_action_type_mapping(group=True, recompute=False)
         df['action_type'] = df['action_type'].map(action_type2natural)
 
         # basic pre-process data i.e. dropping duplicates, only take sessions with clicks and clip to last click out

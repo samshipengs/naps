@@ -112,11 +112,11 @@ def train(train_inputs, params, only_last=False, retrain=False):
 
 if __name__ == '__main__':
     setup = {'nrows': None,
-             'recompute_train': False,
-             'add_test': True,
+             'recompute_train': True,
+             'add_test': False,
              'only_last': True,
              'retrain': True,
-             'recompute_test': False}
+             'recompute_test': True}
 
     device = 'GPU' if check_gpu() else 'CPU'
     params = {'loss_function': 'MultiClass',

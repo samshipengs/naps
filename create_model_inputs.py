@@ -131,6 +131,8 @@ def filter_selection_mapping(select_n_filters=32, recompute=False):
 
 
 _, n_unique_actions = create_action_type_mapping(group=True, recompute=False)
+n_unique_cs = len(change_sort_order_mapping())
+_, n_unique_fs = filter_selection_mapping(select_n_filters=32)
 
 
 def compute_session_func(grp):
@@ -150,7 +152,7 @@ def compute_session_func(grp):
     df['last_duration'] = df['timestamp'].diff().dt.total_seconds()
     # maybe we dont fillna with 0 as it could be implying a very short time interval
     # df['last_duration'] = df['last_duration'].fillna(0)
-    df = df.drop('timestamp', axis=1).reset_index(drop=True)
+    df.drop('timestamp', axis=1, inplace=True)
 
     # get action type info of last previous row (clickout, search for, interaction, feature selection, change of sort)
     action_cols = ['co', 'search', 'inter', 'fs', 'cs']
@@ -160,6 +162,10 @@ def compute_session_func(grp):
     # grab the actual value of the filter_selection and sort_order
     df['fs'] = df['fs'] * df['filter_selection']
     df['cs'] = df['cs'] * df['sort_order']
+    # fillna of missing fs and cs with the largest encoding + 1, which is the n_unique
+    df['fs'] = df['fs'].fillna(n_unique_fs)
+    df['cs'] = df['cs'].fillna(n_unique_cs)
+
     # shift down
     df[action_cols] = df[action_cols].shift(1)
     # TODO Add impression relative location
@@ -198,7 +204,8 @@ def compute_session_func(grp):
     # name last ones
     last_click.columns = [f'last_click_{i}' for i in range(len(unique_items))]
     last_interact = df[interact_cols].shift(1)
-    # df.drop(click_cols + interact_cols, axis=1, inplace=True)
+    # remove the orginal click and interact cols, swap on the last and prev clicks and interaction cols
+    df.drop(click_cols + interact_cols, axis=1, inplace=True)
     # name last ones
     last_interact.columns = [f'last_interact_{i}' for i in range(len(unique_items))]
 
@@ -238,9 +245,9 @@ def compute_session(args):
     grps = (df[df['session_id'].isin(gids)]
             .reset_index(drop=True)
             .groupby('session_id'))
-
     # use apply to compute session level features
-    features = grps.apply(compute_session_func).reset_index(drop=True)
+    features = grps.apply(compute_session_func)
+    features = features.reset_index(drop=True)
     return features
 
 
@@ -254,12 +261,13 @@ def compute_session_fts(df, nprocs=None):
     t1 = time.time()
     if nprocs is None:
         nprocs = mp.cpu_count() - 1
-        # nprocs = 2
+        nprocs = 2
         logger.info('Using {} cores'.format(nprocs))
 
     # get all session ids
     sids = df['session_id'].unique()
     fts = []
+    # compute_session((sids, df))
 
     # create iterator to pass in args for pool
     def args_gen():

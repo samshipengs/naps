@@ -16,7 +16,7 @@ from sklearn.model_selection import KFold, ShuffleSplit
 import lightgbm as lgb
 
 from create_model_inputs import create_model_inputs
-from utils import get_logger, get_data_path
+from utils import get_logger, get_data_path, check_gpu
 from plots import plot_hist, confusion_matrix, plot_imp_lgb
 
 
@@ -31,7 +31,7 @@ def compute_mrr(y_pred, y_true):
     return np.mean(1 / (pred_label + 1))
 
 
-def train(train_inputs, params, only_last=False, retrain=False):
+def train(train_inputs, params, only_last=False, retrain=False, verbose=True):
     # path to where model is saved
     model_path = Filepath.model_path
 
@@ -58,6 +58,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
     mrrs = []
     t_init = time.time()
     for fold, (trn_ind, val_ind) in enumerate(ss.split(unique_session_ids)):
+        t1 = time.time()
         logger.info(f'Training fold {fold}: train ids len={len(trn_ind):,} | val ids len={len(val_ind):,}')
         # get session_id used for train
         trn_ids = unique_session_ids[trn_ind]
@@ -130,6 +131,9 @@ def train(train_inputs, params, only_last=False, retrain=False):
         clfs.append(clf)
         mrrs.append((trn_mrr, val_mrr))
 
+        if verbose:
+            logger.info(f'Done training {fold}, took: {(time.time()-t1)/60:.2f} mins')
+
     logger.info(f'Total time took: {(time.time()-t_init)/60:.2f} mins')
     return clfs, mrrs
 
@@ -172,7 +176,8 @@ def lgb_tuning(xtrain, n_searches=100):
         eval_func = partial(train,
                             train_inputs=xtrain,
                             only_last=False,
-                            retrain=False)
+                            retrain=False,
+                            verbose=False)
         # modeling from CV
         _, mrrs = eval_func(params)
         return -np.mean(mrrs)
@@ -220,7 +225,7 @@ if __name__ == '__main__':
               'feature_fraction': 0.8,
               'num_boost_round': 5000,
               'early_stopping_rounds': 100,
-              'learning_rate': 0.01,
+              'learning_rate': 0.02,
               'objective': 'multiclass',
               'num_class': 25,
               'metric': ['multi_logloss'],
@@ -231,6 +236,14 @@ if __name__ == '__main__':
     if params['boosting'] != 'goss':
         params['bagging_fraction'] = 0.9
         params['bagging_freq'] = 1
+
+    if check_gpu:
+        params['device'] = 'gpu'
+        params['max_bin'] = 15  # 63
+        params['gpu_use_dp'] = False
+        logger.info('Using GPU')
+    else:
+        logger.info('Using CPU')
 
     logger.info(f"\nSetup\n{'=' * 20}\n{pprint.pformat(setup)}\n{'=' * 20}")
     logger.info(f"\nParams\n{'=' * 20}\n{pprint.pformat(params)}\n{'=' * 20}")

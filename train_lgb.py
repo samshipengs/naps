@@ -3,9 +3,15 @@ import time
 import pprint
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+from functools import partial
 from datetime import datetime as dt
 from ast import literal_eval
 
+from skopt import gp_minimize
+from skopt.space import Real, Categorical, Integer
+from skopt.plots import plot_convergence
+from skopt.utils import use_named_args
 from sklearn.model_selection import KFold, ShuffleSplit
 import lightgbm as lgb
 
@@ -91,7 +97,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
                             valid_sets=[lgb_trn_data, lgb_val_data],
                             valid_names=['train', 'val'],
                             categorical_feature=cat_ind,
-                            #init_model=lgb.Booster(model_file=model_filename),
+                            # init_model=lgb.Booster(model_file=model_filename),
                             verbose_eval=100)
             # grab feature importances
             imp_df = pd.DataFrame()
@@ -126,6 +132,78 @@ def train(train_inputs, params, only_last=False, retrain=False):
 
     logger.info(f'Total time took: {(time.time()-t_init)/60:.2f} mins')
     return clfs, mrrs
+
+
+def lgb_tuning(xtrain, n_searches=100):
+    """
+    Tuning hyperparams through Bayesian opt
+    :param xtrain: input train dataframe
+    :param n_searches: number of calls to make in the gaussian process
+    :return: best params dictionary and best score
+    """
+    # specify the range of hyperparams values to go through
+    dim_num_leaves = Integer(low=10, high=40, name='num_leaves')
+    dim_max_depth = Integer(low=5, high=40, name='max_depth')
+    dim_max_bin = Integer(low=50, high=400, name='max_bin')
+    dim_min_split_gain = Real(low=0, high=10, name='min_split_gain')
+    dim_min_child_weight = Real(low=0, high=10, name='min_child_weight')
+    dim_min_child_samples = Integer(low=10, high=50, name='min_child_samples')
+    dim_subsample = Real(low=0.1, high=0.99, name='subsample')
+    dim_subsample_freq = Integer(low=1, high=10, name='subsample_freq')
+    dim_colsample_bytree = Real(low=0.1, high=0.99, name='colsample_bytree')
+    dim_reg_alpha = Real(low=0, high=10, name='reg_alpha')
+    dim_reg_lambda = Real(low=0, high=10, name='reg_lambda')
+
+    dimensions = [dim_num_leaves,
+                  dim_max_depth,
+                  dim_max_bin,
+                  dim_min_split_gain,
+                  dim_min_child_weight,
+                  dim_min_child_samples,
+                  dim_subsample,
+                  dim_subsample_freq,
+                  dim_colsample_bytree,
+                  dim_reg_alpha,
+                  dim_reg_lambda]
+
+    @use_named_args(dimensions=dimensions)
+    def fitness(**params):
+        # train(train_inputs, params, only_last=False, retrain=False):
+        eval_func = partial(train,
+                            train_inputs=xtrain,
+                            only_last=False,
+                            retrain=False)
+        # modeling from CV
+        _, mrrs = eval_func(params)
+        return -np.mean(mrrs)
+
+    # search
+    t1 = time.time()
+    # n_cpu = multiprocessing.cpu_count() - 1
+    search_result = gp_minimize(func=fitness,
+                                dimensions=dimensions,
+                                acq_func='gp_hedge',  # Expected Improvement.
+                                n_calls=n_searches,
+                                # n_jobs=n_cpu,
+                                verbose=True)
+    t2 = time.time()
+
+    best_score = search_result.fun
+    logger.info('Params tuning took: {0:.2f}mins'.format((t2 - t1) / 60))
+    logger.info('Best score = {0:.4f}'.format(best_score))
+    logger.info('Best params found:\n' + '=' * 20)
+    # get the best params
+    best_params = {}
+    for k, v in enumerate(dimensions):
+        best_params[v.name] = search_result.x[k]
+        print(f'{v.name}: {search_result.x[k]}')
+    best_params_name = os.path.join(Filepath.opt_path, f'best_params_{best_score:.5f}.npy')
+    np.save(best_params_name, best_params)
+    logger.info('Saved best_params to {}'.format(best_params_name))
+    # plot gp convergence
+    plot_convergence(search_result)
+    plt.savefig(os.path.join(Filepath.opt_path, 'gp_convergence.png'))
+    return best_params, best_score
 
 
 if __name__ == '__main__':

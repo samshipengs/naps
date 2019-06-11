@@ -30,7 +30,9 @@ def get_data_path():
                  'gbm_cache_path': './gbm_cache',
                  'sub_path': './subs',
                  'model_path': './models',
+                 'imp_path': './feature_importance',
                  'plot_path': './plots',
+                 'opt_path': './opts',
                  'log_path': './logs',
                  'tf_logs': './logs/tf_logs'}
     for _, v in path_dict.items():

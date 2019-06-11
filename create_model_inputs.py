@@ -135,6 +135,24 @@ n_unique_cs = len(change_sort_order_mapping())
 _, n_unique_fs = filter_selection_mapping(select_n_filters=32)
 
 
+def fina_relative_ref_loc(row):
+    last_ref = row['last_reference']
+    if pd.isna(last_ref) or type(row['impressions']) != list:
+        # first row
+        return np.nan
+    else:
+        # try:
+        imps = list(row['impressions'])
+        if last_ref in imps:
+            return (imps.index(last_ref)+1)/25
+        else:
+            return np.nan
+        # except Exception as e:
+        #     print(e)
+        #     print(row)
+        #     print(last_ref)
+
+
 def compute_session_func(grp):
     """
     Main working function to compute features or shaping data
@@ -162,14 +180,10 @@ def compute_session_func(grp):
     # grab the actual value of the filter_selection and sort_order
     df['fs'] = df['fs'] * df['filter_selection']
     df['cs'] = df['cs'] * df['sort_order']
-    # fillna of missing fs and cs with the largest encoding + 1, which is the n_unique
-    df['fs'] = df['fs'].fillna(n_unique_fs)
-    df['cs'] = df['cs'].fillna(n_unique_cs)
 
     # shift down
     df[action_cols] = df[action_cols].shift(1)
-    # TODO Add impression relative location
-
+    
     # in case there is just one row, use list comprehension instead of np concat
     impressions = df['impressions'].dropna().values
     unique_items = list(set([j for i in impressions for j in i] + list(df['reference'].unique())))
@@ -196,36 +210,59 @@ def compute_session_func(grp):
     prev_click_df = df_temp[click_cols].shift(1).cumsum()
     prev_interact_df = df_temp[interact_cols].shift(1).cumsum()
 
-    # now we need to get the last row clickout and interaction
-    # fillna for grabing the last info (cannot ffill in the beginning as it will create extra sum in cumsum)
-    df.fillna(method='ffill', inplace=True)
-    # get last one
-    last_click = df[click_cols].shift(1)
-    # name last ones
-    last_click.columns = [f'last_click_{i}' for i in range(len(unique_items))]
-    last_interact = df[interact_cols].shift(1)
+    # LAST ROW AND INTERACTION SEEMS LIKE UNNECESSARY, COMMENT OUT FOR NOW
+#     # now we need to get the last row clickout and interaction
+#     # fillna for grabing the last info (cannot ffill in the beginning as it will create extra sum in cumsum)
+#     df.fillna(method='ffill', inplace=True)
+#     # get last one
+#     last_click = df[click_cols].shift(1)
+#     # name last ones
+#     last_click.columns = [f'last_click_{i}' for i in range(len(unique_items))]
+#     last_interact = df[interact_cols].shift(1)
+#     # name last ones
+#     last_interact.columns = [f'last_interact_{i}' for i in range(len(unique_items))]
+#     # remove the orginal click and interact cols, swap on the last and prev clicks and interaction cols
+#     df.drop(click_cols + interact_cols, axis=1, inplace=True)
+#     # concat all
+#     df = pd.concat([df, last_click, prev_click_df, last_interact, prev_interact_df], axis=1)
+    
     # remove the orginal click and interact cols, swap on the last and prev clicks and interaction cols
     df.drop(click_cols + interact_cols, axis=1, inplace=True)
-    # name last ones
-    last_interact.columns = [f'last_interact_{i}' for i in range(len(unique_items))]
-
     # concat all
-    df = pd.concat([df, last_click, prev_click_df, last_interact, prev_interact_df], axis=1)
+    df = pd.concat([df, prev_click_df, prev_interact_df], axis=1)
+
+    # add impression relative location
+    df['last_reference'] = df['reference'].shift(1)
+    df.loc[click_out_mask, 'last_reference_relative_loc'] = df.apply(fina_relative_ref_loc, axis=1)
+    df.drop('last_reference', axis=1, inplace=True)
+
     # only need click-out rows now
     df = df[click_out_mask].reset_index(drop=True)
-    # df.fillna(0, inplace=True) # if no good reason to fillna with 0, keep it commented out
+    # fillna of missing fs and cs with the largest encoding + 1, which is the n_unique
+    df['fs'] = df['fs'].fillna(n_unique_fs)
+    df['cs'] = df['cs'].fillna(n_unique_cs)
+    # fillna for nans in last click or interact for example
+#     df.fillna(0, inplace=True) # if no good reason to fillna with 0, keep it commented out
+#     df[last_click.columns] = df[last_click.columns].fillna(0)
+#     df[last_interact.columns] = df[last_interact.columns].fillna(0)
 
     # now select only the ones that is needed for each row
     def match(row, cols):
         impressions_natural = [temp_mapping[imp] for imp in row['impressions']]
         return row[cols].values[impressions_natural]
 
-    iter_cols = {'last_click': last_click.columns, 'prev_click': click_cols,
-                 'last_interact': last_interact.columns, 'prev_interact': interact_cols}
+#     iter_cols = {'last_click': last_click.columns, 'prev_click': click_cols,
+#                  'last_interact': last_interact.columns, 'prev_interact': interact_cols}
+    iter_cols = {'prev_click': click_cols, 'prev_interact': interact_cols}
     for k, v in iter_cols.items():
         func = partial(match, cols=v)
         df[k] = df.apply(func, axis=1)
         df.drop(v, axis=1, inplace=True)
+    # # temp
+    # prev_interact_cols = [c for c in df.columns if 'prev_interact' in c]
+    # prev_click_cols = [c for c in df.columns if 'prev_click' in c]
+    # df[prev_interact_cols] = df[prev_interact_cols].fillna(0)
+    # df[prev_click_cols] = df[prev_click_cols].fillna(0)
     return df
 
 
@@ -260,7 +297,7 @@ def compute_session_fts(df, nprocs=None):
     """
     t1 = time.time()
     if nprocs is None:
-        nprocs = mp.cpu_count() - 1
+        # nprocs = mp.cpu_count() - 1
         nprocs = 2
         logger.info('Using {} cores'.format(nprocs))
 
@@ -321,8 +358,10 @@ def different_impressions(input_df):
         df['imp_shift'] = df['impressions'].shift(1)
         df['imp_shift'] = df['imp_shift'].fillna(method='ffill')
         df['imp_changed'] = (df['impressions'] != df['imp_shift']).astype(int)
-        # first is always nan
-        df.loc[df.index[0], 'imp_changed'] = np.nan
+        # the imp_changed of first impression list is always nan
+        first_imp = df['impressions'].notna()
+        first_imp = first_imp[first_imp].index[0]
+        df.loc[first_imp, 'imp_changed'] = np.nan
         return df
 
     input_df = grp.apply(_diff)
@@ -370,7 +409,8 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         df['n_imps'] = df['impressions'].str.len()
         padding_mask = df['n_imps'] < 25
         # pad zeros for length less than 25
-        cols_to_pad = ['impressions', 'last_click', 'prev_click', 'last_interact', 'prev_interact']
+        # cols_to_pad = ['impressions', 'last_click', 'prev_click', 'last_interact', 'prev_interact']
+        cols_to_pad = ['impressions', 'prev_click', 'prev_interact']
         for c in cols_to_pad:
             # convert list of pad as array gets saved without comma in csv
             df.loc[padding_mask, c] = (df
@@ -470,8 +510,9 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         df.drop(drop_cols, axis=1, inplace=True)
 
         # finally expand all column of list to columns
-        expand_cols = ['prices', 'prices_rank', 'last_click', 'prev_click', 'last_interact',
-                       'prev_interact', 'current_filters']
+        # expand_cols = ['prices', 'prices_rank', 'last_click', 'prev_click', 'last_interact',
+        #                'prev_interact', 'current_filters']
+        expand_cols = ['prices', 'prices_rank', 'prev_click', 'prev_interact', 'current_filters']
         for col in expand_cols:
             logger.info(f'Expanding on {col}')
             df = expand(df, col)

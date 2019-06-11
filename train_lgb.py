@@ -1,11 +1,12 @@
 import os
 import time
+import pprint
 import pandas as pd
 import numpy as np
 from datetime import datetime as dt
 from ast import literal_eval
 
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, ShuffleSplit
 import lightgbm as lgb
 
 from create_model_inputs import create_model_inputs
@@ -28,6 +29,12 @@ def train(train_inputs, params, only_last=False, retrain=False):
     # path to where model is saved
     model_path = Filepath.model_path
 
+    # specify some columns that we do not want in training
+    cf_cols = [c for c in train_inputs.columns if 'current_filters' in c]
+    drop_cols = cf_cols  # + ['country', 'platform']
+    # drop cf col for now
+    train_inputs.drop(drop_cols, axis=1, inplace=True)
+    logger.info(f'train columns: {train_inputs.columns}')
     # if only use the last row of train_inputs to train
     if only_last:
         logger.info('Training ONLY with last row')
@@ -37,29 +44,36 @@ def train(train_inputs, params, only_last=False, retrain=False):
     # train and valid
     unique_session_ids = train_inputs['session_id'].unique()
 
-    # kf = StratifiedKFold(n_splits=6)
-    kf = KFold(n_splits=5, shuffle=True, random_state=RS)
+    # kf = KFold(n_splits=5, shuffle=True, random_state=RS)
+    ss = ShuffleSplit(n_splits=5, test_size=0.15, random_state=RS)
 
     # record classifiers and mrr each training
     clfs = []
     mrrs = []
     t_init = time.time()
-    for fold, (trn_ind, val_ind) in enumerate(kf.split(unique_session_ids)):
-        logger.info(f'Training fold {fold}: train len={len(trn_ind):,} | val len={len(val_ind):,}')
+    for fold, (trn_ind, val_ind) in enumerate(ss.split(unique_session_ids)):
+        logger.info(f'Training fold {fold}: train ids len={len(trn_ind):,} | val ids len={len(val_ind):,}')
         # get session_id used for train
         trn_ids = unique_session_ids[trn_ind]
         trn_mask = train_inputs['session_id'].isin(trn_ids)
+        logger.info(f'Training fold {fold}: train len={trn_mask.sum():,} | val ids len={(~trn_mask).sum():,}')
 
         x_trn, x_val = (train_inputs[trn_mask].reset_index(drop=True),
                         train_inputs[~trn_mask].reset_index(drop=True))
 
-        # for validation only last row is needed
-        x_val = x_val.groupby('session_id').last().reset_index(drop=False)
+        if not only_last:
+            # for validation only last row is needed
+            x_val = x_val.groupby('session_id').last().reset_index(drop=False)
 
         # get target
         y_trn, y_val = x_trn['target'].values, x_val['target'].values
         x_trn.drop(['session_id', 'target'], axis=1, inplace=True)
         x_val.drop(['session_id', 'target'], axis=1, inplace=True)
+
+        # get categorical index
+        cat_cols = ['country', 'device', 'platform', 'fs', 'cs']
+        cat_ind = [k for k, v in enumerate(x_trn.columns) if v in cat_cols]
+        # =====================================================================================
 
         lgb_trn_data = lgb.Dataset(x_trn, label=y_trn, free_raw_data=False)
         lgb_val_data = lgb.Dataset(x_val, label=y_val, free_raw_data=False)
@@ -76,6 +90,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
                             lgb_trn_data,
                             valid_sets=[lgb_trn_data, lgb_val_data],
                             valid_names=['train', 'val'],
+                            categorical_feature=cat_ind,
                             #init_model=lgb.Booster(model_file=model_filename),
                             verbose_eval=100)
             # grab feature importances
@@ -114,18 +129,18 @@ def train(train_inputs, params, only_last=False, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 5000000,
+    setup = {'nrows': None,
              'recompute_train': False,
-             'add_test': True,
+             'add_test': False,
              'only_last': False,
              'retrain': True,
-             'recompute_test': True}
+             'recompute_test': False}
 
     params = {'boosting': 'gbdt',  # gbdt, dart, goss
               'max_depth': -1,
               'num_leaves': 12,
               'feature_fraction': 0.8,
-              'num_boost_round': 3000,
+              'num_boost_round': 5000,
               'early_stopping_rounds': 100,
               'learning_rate': 0.01,
               'objective': 'multiclass',
@@ -134,12 +149,13 @@ if __name__ == '__main__':
               'verbose': -1,
               'seed': 42,
               }
+
     if params['boosting'] != 'goss':
         params['bagging_fraction'] = 0.9
         params['bagging_freq'] = 1
 
-    logger.info(f"\nSetup\n{'='*20}\n{setup}\n{'='*20}")
-    logger.info(f"\nParams\n{'='*20}\n{params}\n{'='*20}")
+    logger.info(f"\nSetup\n{'=' * 20}\n{pprint.pformat(setup)}\n{'=' * 20}")
+    logger.info(f"\nParams\n{'=' * 20}\n{pprint.pformat(params)}\n{'=' * 20}")
 
     # first create training inputs
     train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], padding_value=np.nan,
@@ -187,6 +203,7 @@ if __name__ == '__main__':
     test_sub.rename(columns={'recommendations': 'item_recommendations'}, inplace=True)
     test_sub = test_sub[sub_columns]
     current_time = dt.now().strftime('%m-%d-%H-%M')
-    test_sub.to_csv(os.path.join(Filepath.sub_path, f'lgb_sub_{current_time}_{train_mrr}_{val_mrr}.csv'), index=False)
+    test_sub.to_csv(os.path.join(Filepath.sub_path, f'lgb_sub_{current_time}_{train_mrr:.4f}_{val_mrr:.4f}.csv'),
+                    index=False)
     logger.info('Done all')
 

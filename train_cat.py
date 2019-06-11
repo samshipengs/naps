@@ -1,11 +1,12 @@
 import os
 import time
+import pprint
 import pandas as pd
 import numpy as np
 from datetime import datetime as dt
 from ast import literal_eval
 
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, ShuffleSplit
 import catboost as cat
 
 from create_model_inputs import create_model_inputs
@@ -22,10 +23,13 @@ RS = 42
 def train(train_inputs, params, only_last=False, retrain=False):
     # path to where model is saved
     model_path = Filepath.model_path
-    cf_cols = [c for c in train_inputs.columns if 'current_filters' in c]
-    # drop cf col for now
-    train_inputs.drop(cf_cols, axis=1, inplace=True)
 
+    # specify some columns that we do not want in training
+    cf_cols = [c for c in train_inputs.columns if 'current_filters' in c]
+    drop_cols = cf_cols   # + ['country', 'platform']
+    # drop cf col for now
+    train_inputs.drop(drop_cols, axis=1, inplace=True)
+    logger.info(f'train columns: {train_inputs.columns}')
     # if only use the last row of train_inputs to train
     if only_last:
         logger.info('Training ONLY with last row')
@@ -35,13 +39,14 @@ def train(train_inputs, params, only_last=False, retrain=False):
     # train and valid
     unique_session_ids = train_inputs['session_id'].unique()
 
-    kf = KFold(n_splits=5, shuffle=True, random_state=RS)
+    # kf = KFold(n_splits=5, shuffle=True, random_state=RS)
+    ss = ShuffleSplit(n_splits=5, test_size=0.15, random_state=RS)
 
     # record classifiers and mrr each training
     clfs = []
     mrrs = []
     t_init = time.time()
-    for fold, (trn_ind, val_ind) in enumerate(kf.split(unique_session_ids)):
+    for fold, (trn_ind, val_ind) in enumerate(ss.split(unique_session_ids)):
         logger.info(f'Training fold {fold}: train ids len={len(trn_ind):,} | val ids len={len(val_ind):,}')
         # get session_id used for train
         trn_ids = unique_session_ids[trn_ind]
@@ -51,8 +56,9 @@ def train(train_inputs, params, only_last=False, retrain=False):
         x_trn, x_val = (train_inputs[trn_mask].reset_index(drop=True),
                         train_inputs[~trn_mask].reset_index(drop=True))
 
-        # for validation only last row is needed
-        x_val = x_val.groupby('session_id').last().reset_index(drop=False)
+        if not only_last:
+            # for validation only last row is needed
+            x_val = x_val.groupby('session_id').last().reset_index(drop=False)
 
         # get target
         y_trn, y_val = x_trn['target'].values, x_val['target'].values
@@ -76,12 +82,37 @@ def train(train_inputs, params, only_last=False, retrain=False):
             clf.fit(x_trn, y_trn,
                     cat_features=cat_ind,
                     eval_set=(x_val, y_val),
-                    early_stopping_rounds=100,
                     verbose=100,
                     plot=False)
-            trn_imp = clf.get_feature_importance(prettified=True,
-                                                 type='FeatureImportance')
-            plot_imp_cat(trn_imp, fold)
+            # TODO
+            # fix
+            # Shrink model to first 6379 iterations.
+            # [06-09 23:10:22 - train_model-89 - train - INFO] Getting feature importance with ShapValues
+            # Traceback (most recent call last):
+            #   File "train_cat.py", line 169, in <module>
+            #     # train the model
+            #   File "train_cat.py", line 95, in train
+            #     plot_imp_cat(imp, f'{ftype}_{fold}')
+            #   File "/home/sam/Desktop/naps/plots.py", line 58, in plot_imp_cat
+            #     imp.columns = ['features', 'feature_importance']
+            #   File "/home/sam/anaconda3/lib/python3.6/site-packages/pandas/core/generic.py", line 5080, in __setattr__
+            #     return object.__setattr__(self, name, value)
+            #   File "pandas/_libs/properties.pyx", line 69, in pandas._libs.properties.AxisProperty.__set__
+            #   File "/home/sam/anaconda3/lib/python3.6/site-packages/pandas/core/generic.py", line 638, in _set_axis
+            #     self._data.set_axis(axis, labels)
+            #   File "/home/sam/anaconda3/lib/python3.6/site-packages/pandas/core/internals/managers.py", line 155, in set_axis
+            #     'values have {new} elements'.format(old=old_len, new=new_len))
+            # ValueError: Length mismatch: Expected axis has 25 elements, new values have 2 elements
+
+            # The Depthwise and Lossguide growing policies are not supported for feature importance
+            ftype = 'FeatureImportance'   # FeatureImportance, ShapValues, Interaction
+            logger.info(f'Getting feature importance with {ftype}')
+            if ftype == 'ShapValues':
+                imp_data = cat.Pool(x_val, label=y_val, cat_features=cat_ind)
+                imp = clf.get_feature_importance(data=imp_data, prettified=True, type=ftype)
+            else:
+                imp = clf.get_feature_importance(prettified=True, type=ftype)
+            plot_imp_cat(imp, f'{ftype}_{fold}')
             clf.save_model(model_filename)
 
         # make prediction
@@ -112,24 +143,45 @@ def train(train_inputs, params, only_last=False, retrain=False):
 
 if __name__ == '__main__':
     setup = {'nrows': None,
-             'recompute_train': True,
+             'recompute_train': False,
              'add_test': False,
-             'only_last': True,
+             'only_last': False,
              'retrain': True,
-             'recompute_test': True}
+             'recompute_test': False}
 
     device = 'GPU' if check_gpu() else 'CPU'
     params = {'loss_function': 'MultiClass',
-              'custom_metric': ['MultiClass', 'Accuracy'],
+              'custom_metric': ['Accuracy'],
               'eval_metric': 'MultiClass',
               'iterations': 10000,
               'learning_rate': 0.02,
-              # 'depth': 8,
-              # 'min_data_in_leaf': 2,
+              'early_stopping_rounds': 100,
+              # SymmetricTree, Depthwise, Lossguide (lossguide seems like not implemented)
+              'grow_policy': 'SymmetricTree',
+              'depth': 5,
+              'bootstrap_type': 'Bayesian',  # Poisson, Bayesian, Bernoulli
+              # 'subsample': 0.66,
+              'bagging_temperature': 2,
+              'l2_leaf_reg': 5,
+              'random_strength': 2,
+              'border_count': 50,
               'task_type': device}
 
-    logger.info(f"\nSetup\n{'='*20}\n{setup}\n{'='*20}")
-    logger.info(f"\nParams\n{'='*20}\n{params}\n{'='*20}")
+    if params['grow_policy'] == 'Lossguide':
+        # Can be used only with the Lossguide growing policy.
+        params['max_leaves'] = 31
+
+    if device == 'GPU':
+        # Can be used only with the Lossguide and Depthwise growing policies.
+        if params['grow_policy'] == 'SymmetricTree':
+            logger.warning('min_data_in_leaf is not used in SymmetricTree')
+        else:
+            params['min_data_in_leaf'] = 5
+    else:
+        params['rsm'] = 0.9
+
+    logger.info(f"\nSetup\n{'='*20}\n{pprint.pformat(setup)}\n{'='*20}")
+    logger.info(f"\nParams\n{'='*20}\n{pprint.pformat(params)}\n{'='*20}")
 
     # first create training inputs
     train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], padding_value=np.nan,
@@ -177,6 +229,7 @@ if __name__ == '__main__':
     test_sub.rename(columns={'recommendations': 'item_recommendations'}, inplace=True)
     test_sub = test_sub[sub_columns]
     current_time = dt.now().strftime('%m-%d-%H-%M')
-    test_sub.to_csv(os.path.join(Filepath.sub_path, f'cat_sub_{current_time}_{train_mrr:.4f}_{val_mrr:.4f}.csv'), index=False)
+    test_sub.to_csv(os.path.join(Filepath.sub_path, f'cat_sub_{current_time}_{train_mrr:.4f}_{val_mrr:.4f}.csv'),
+                    index=False)
     logger.info('Done all')
 

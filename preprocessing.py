@@ -9,8 +9,10 @@ from utils import load_data, get_logger, get_data_path, flogger
 logger = get_logger('preprocessing')
 Filepath = get_data_path()
 
+# USE_COLS = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters', 'reference', 'impressions', 'prices',
+#             'country', 'device', 'platform']
 USE_COLS = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters', 'reference', 'impressions', 'prices',
-            'country', 'device', 'platform']
+            'device']
 
 
 # 0)
@@ -21,10 +23,11 @@ def remove_duplicates(df):
     :return: dataframe
     """
     logger.info('Dropping exactly same rows (except step)')
-    # find duplicates except steps
-    df = (df
-          .sort_values(by=['user_id', 'session_id', 'timestamp', 'step'], ascending=[True, True, True, True])
-          .reset_index(drop=True))
+    # find duplicates except steps (the sorting seems like unnecessary, if fact due to an interesting case from test,
+    # when using added test, 2a181b2125efe has nan reference appeared earlier than an clickout)
+    # df = (df
+    #       .sort_values(by=['user_id', 'session_id', 'timestamp', 'step'], ascending=[True, True, True, True])
+    #       .reset_index(drop=True))
     logger.info(f'Before dropping duplicates df shape: ({df.shape[0]:,}, {df.shape[1]})')
 
     # get columns used to drop duplicates
@@ -157,9 +160,9 @@ def create_action_type_mapping(group=True, recompute=False):
 
 def city2country(df, recompute=False):
     logger.info('Extract country info from city column and then drop city column')
-    df['country'] = df['city'].str.extract(r', (.+)')
+    df['country'] = df['city'].str.split(', ').str[-1]
+    df['country'] = df['country'].str.lower()
     df.drop('city', axis=1, inplace=True)
-    print('\n\n', df.columns, df.head())
     filepath = Filepath.gbm_cache_path
     filename = os.path.join(filepath, 'country_mapping.npy')
 
@@ -252,7 +255,7 @@ def preprocess_data(mode, nrows=None, add_test=True, recompute=False):
         df = device2int(df, recompute=False)
         df = platform2int(df, recompute=False)
         df = df[USE_COLS]
-        print(df.head())
+        logger.debug(f'\n{df.head()}')
 
         # logger.info('Sort df by session_id, timestamp, step')
         # df = df.sort_values(by=['session_id', 'timestamp', 'step']).reset_index(drop=True)

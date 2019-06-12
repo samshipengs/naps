@@ -461,19 +461,49 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         meta_items = meta_mapping['item_id'].unique()
         item_rating_mapping = dict(meta_mapping[['item_id', 'ratings']].values)
         item_star_mapping = dict(meta_mapping[['item_id', 'stars']].values)
-
-        def _map_rating(imps):
-            return [item_rating_mapping[i] if i in meta_items else np.nan for i in imps]
-
-        def _map_star(imps):
-            return [item_star_mapping[i] if i in meta_items else np.nan for i in imps]
-
-        logger.info('Start rating mapping')
-        df['ratings'] = df['impressions'].apply(_map_rating)
-        logger.info('Start star mapping')
-        df['stars'] = df['impressions'].apply(_map_star)
-        del meta_mapping, item_rating_mapping, item_star_mapping, meta_items
+        del meta_mapping
         gc.collect()
+
+        # def _map_rating(imps):
+        #     return [item_rating_mapping[i] if i in meta_items else np.nan for i in imps]
+        #
+        # def _map_star(imps):
+        #     return [item_star_mapping[i] if i in meta_items else np.nan for i in imps]
+        #
+        # logger.info('Start rating mapping')
+        # df['ratings'] = df['impressions'].apply(_map_rating)
+        # logger.info('Start star mapping')
+        # df['stars'] = df['impressions'].apply(_map_star)
+
+        # instead of iterate over each element in row, try to explode and map then collapse
+        logger.info('Start rating mapping by exploding first, map then collapse')
+        imp_vals = df['impressions'].values.tolist()
+        # grab the required repeating len
+        rs = [len(r) for r in imp_vals]
+        temp = pd.concat([np.repeat(df['session_id'], rs), np.repeat(df['step'], rs)], axis=1)
+
+        base = pd.DataFrame(np.column_stack((temp, np.concatenate(imp_vals))),
+                            columns=['session_id', 'step', 'impressions'])
+        base['ratings'] = base['impressions'].map(item_rating_mapping)
+        base['stars'] = base['impressions'].map(item_star_mapping)
+        base.drop('impressions', axis=1, inplace=True)
+        del item_rating_mapping, item_star_mapping, meta_items
+        gc.collect()
+        # collapse it back
+        ratings = base.groupby(['session_id', 'step'])['ratings'].apply(list).reset_index()
+        stars = base.groupby(['session_id', 'step'])['stars'].apply(list).reset_index()
+        del base
+        gc.collect()
+        logger.info('Created ratings and stars dataframe, now merge it back to df')
+
+        # join it back to df
+        df = pd.merge(df, ratings, on=['session_id', 'step'])
+        del ratings
+        gc.collect()
+        df = pd.merge(df, stars, on=['session_id', 'step'])
+        del stars
+        gc.collect()
+
         logger.info('Done meta mapping')
 
         # padding
@@ -495,8 +525,10 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
             logger.info('Assign target, first convert reference id to int'
                         'if needed convert non-integer str reference value to a str number')
             non_int = df['reference'].str.contains(r'[^\d]+')
-            logger.warning(f'There are {non_int} number of non-int references')
-            df.loc[non_int, 'reference'] = '-1'
+            n_non_int = non_int.sum()
+            if n_non_int != 0:
+                logger.warning(f'There are {n_non_int} number of non-int references')
+                df.loc[non_int, 'reference'] = '-1'
             df['reference'] = df['reference'].astype(int)
 
             # filter out nan rows with reference_id not in impressions list, since if the true target in test
@@ -633,8 +665,8 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
 
 
 if __name__ == '__main__':
-    args = {'mode': 'test',
-            'nrows': None,
+    args = {'mode': 'train',
+            'nrows': 100000,
             'add_test': False,
             'padding_value': np.nan,
             'recompute': True}

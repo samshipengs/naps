@@ -449,6 +449,7 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         df['impressions'] = df['impressions'].apply(lambda x: [int(i) for i in x])
 
         # add meta encodings of ratings and stars
+        logger.info('Adding ratings and stars from meta')
         meta_mapping = meta_encoding()
         rating_cols = ['satisfactory rating', 'good rating', 'very good rating', 'excellent rating']
         meta_mapping['ratings'] = meta_mapping[rating_cols].sum(axis=1)
@@ -457,19 +458,23 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
             meta_mapping[v] = meta_mapping[v] * (k+1)
         meta_mapping['stars'] = meta_mapping[star_cols].max(axis=1)
         meta_mapping = meta_mapping[['item_id', 'ratings', 'stars']]
+        meta_items = meta_mapping['item_id'].unique()
         item_rating_mapping = dict(meta_mapping[['item_id', 'ratings']].values)
         item_star_mapping = dict(meta_mapping[['item_id', 'stars']].values)
 
         def _map_rating(imps):
-            return [item_rating_mapping[i] for i in imps]
+            return [item_rating_mapping[i] if i in meta_items else np.nan for i in imps]
 
         def _map_star(imps):
-            return [item_star_mapping[i] for i in imps]
+            return [item_star_mapping[i] if i in meta_items else np.nan for i in imps]
 
+        logger.info('Start rating mapping')
         df['ratings'] = df['impressions'].apply(_map_rating)
+        logger.info('Start star mapping')
         df['stars'] = df['impressions'].apply(_map_star)
-        del meta_mapping, item_star_mapping, item_star_mapping
+        del meta_mapping, item_rating_mapping, item_star_mapping, meta_items
         gc.collect()
+        logger.info('Done meta mapping')
 
         # padding
         df['n_imps'] = df['impressions'].str.len()

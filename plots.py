@@ -75,7 +75,8 @@ def plot_imp_lgb(imp_df, fold_, plot_n=15):
     :param fold_: current cross validation fold
     :param plot_n: top n features to plot on feature importanc graph
     """
-    imp_df.sort_values(by='feature_importance', ascending=False).to_csv(os.path.join(IMP_PATH, f'lgb_{fold_}.csv'))
+    imp_df.sort_values(by='feature_importance', ascending=False).to_csv(os.path.join(IMP_PATH, f'lgb_{fold_}.csv'),
+                                                                        index=False)
     imp_des = imp_df.sort_values(by='feature_importance', ascending=False)[:plot_n]
     imp_asc = imp_df.sort_values(by='feature_importance', ascending=True)[:plot_n]
 

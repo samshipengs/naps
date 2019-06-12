@@ -239,6 +239,8 @@ def preprocess_data(mode, nrows=None, add_test=True, recompute=False):
                         f'for {len(required_sids):,} unique sessions')
 
         flogger(df, f'raw {mode}')
+        # get time
+        df['timestamp'] = df['timestamp'].apply(lambda ts: datetime.datetime.utcfromtimestamp(ts))
 
         logger.info('Converting action_types to int (natural number)')
         action_type2natural, _ = create_action_type_mapping(group=True, recompute=False)
@@ -248,12 +250,12 @@ def preprocess_data(mode, nrows=None, add_test=True, recompute=False):
         df = basic_preprocess_sessions(df, mode=mode, nrows=nrows, recompute=recompute)
         df['action_type'] = df['action_type'].astype(int)
 
-        # get time and select columns that get used
-        df['timestamp'] = df['timestamp'].apply(lambda ts: datetime.datetime.utcfromtimestamp(ts))
         # get country, device, platform transformed
         df = city2country(df, recompute=False)
         df = device2int(df, recompute=False)
         df = platform2int(df, recompute=False)
+
+        # select columns that get used
         df = df[USE_COLS]
         logger.debug(f'\n{df.head()}')
 

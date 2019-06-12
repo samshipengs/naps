@@ -13,44 +13,74 @@ logger = get_logger('create_model_inputs')
 Filepath = get_data_path()
 
 
+# def meta_encoding(recompute=False):
+#     """
+#     Get encoding, i.e. the properties from meta csv
+#     :param recompute:
+#     :return:
+#         meta_mapping: dict, mapping {123: [1, 0, 0, 1, 0, ...], ...}
+#         n_properties: number of unique properties
+#     """
+#     filepath = Filepath.gbm_cache_path
+#     filename = os.path.join(filepath, 'meta_mapping.npy')
+#     if os.path.isfile(filename) and not recompute:
+#         logger.info(f'Load from existing file: {filename}')
+#         meta_mapping = np.load(filename).item()
+#         n_properties = len(meta_mapping[list(meta_mapping.keys())[0]])
+#     else:
+#         logger.info('Load meta data')
+#         meta_df = load_data('item_metadata')
+#
+#         logger.info('Lower and split properties str to list')
+#         meta_df['properties'] = meta_df['properties'].str.lower().str.split('|')
+#
+#         logger.info('Get all unique properties')
+#         unique_properties = list(set(np.concatenate(meta_df['properties'].values)))
+#         property2natural = {v: k for k, v in enumerate(unique_properties)}
+#         n_properties = len(unique_properties)
+#         logger.info(f'Total number of unique meta properties: {n_properties}')
+#
+#         logger.info('Convert the properties to ohe and superpose for each item_id')
+#         meta_df['properties'] = meta_df['properties'].apply(lambda ps: [property2natural[p] for p in ps])
+#         meta_df['properties'] = meta_df['properties'].apply(lambda ps: np.sum(np.eye(n_properties, dtype=np.int16)[ps],
+#                                                                               axis=0))
+#         logger.info('Create mappings')
+#         meta_mapping = dict(meta_df[['item_id', 'properties']].values)
+#         # add a mapping (all zeros) for the padded impression ids
+#         # meta_mapping[0] = np.zeros(n_properties, dtype=int)
+#         logger.info('Saving meta mapping')
+#         np.save(filename, meta_mapping)
+#     return meta_mapping, n_properties
+
+
 def meta_encoding(recompute=False):
-    """
-    Get encoding, i.e. the properties from meta csv
-    :param recompute:
-    :return:
-        meta_mapping: dict, mapping {123: [1, 0, 0, 1, 0, ...], ...}
-        n_properties: number of unique properties
-    """
     filepath = Filepath.gbm_cache_path
-    filename = os.path.join(filepath, 'meta_mapping.npy')
+    filename = os.path.join(filepath, 'meta_encodings.csv')
     if os.path.isfile(filename) and not recompute:
         logger.info(f'Load from existing file: {filename}')
-        meta_mapping = np.load(filename).item()
-        n_properties = len(meta_mapping[list(meta_mapping.keys())[0]])
+        encoding = pd.read_csv(filename)
     else:
-        logger.info('Load meta data')
-        meta_df = load_data('item_metadata')
+        meta = load_data('item_metadata')
+        # get list of properties
+        meta['properties'] = meta['properties'].str.lower().str.split('|')
 
-        logger.info('Lower and split properties str to list')
-        meta_df['properties'] = meta_df['properties'].str.lower().str.split('|')
+        # create mapping
+        properties = list(set(np.concatenate(meta['properties'].values)))
+        property_mapping = {v: k for k, v in enumerate(properties)}
+        property_names = list(property_mapping.keys())
+        meta['properties'] = meta['properties'].apply(lambda l: [property_mapping[i] for i in l])
+        # create zeros for encoding first
+        zeros = np.zeros((len(meta), len(property_mapping.keys())), dtype=int)
+        # then assign
+        ps = meta['properties']
+        for i in range(meta.shape[0]):
+            zeros[i, ps[i]] = 1
 
-        logger.info('Get all unique properties')
-        unique_properties = list(set(np.concatenate(meta_df['properties'].values)))
-        property2natural = {v: k for k, v in enumerate(unique_properties)}
-        n_properties = len(unique_properties)
-        logger.info(f'Total number of unique meta properties: {n_properties}')
-
-        logger.info('Convert the properties to ohe and superpose for each item_id')
-        meta_df['properties'] = meta_df['properties'].apply(lambda ps: [property2natural[p] for p in ps])
-        meta_df['properties'] = meta_df['properties'].apply(lambda ps: np.sum(np.eye(n_properties, dtype=np.int16)[ps],
-                                                                              axis=0))
-        logger.info('Create mappings')
-        meta_mapping = dict(meta_df[['item_id', 'properties']].values)
-        # add a mapping (all zeros) for the padded impression ids
-        # meta_mapping[0] = np.zeros(n_properties, dtype=int)
-        logger.info('Saving meta mapping')
-        np.save(filename, meta_mapping)
-    return meta_mapping, n_properties
+        encoding = pd.DataFrame(zeros, columns=property_names, index=meta.item_id).reset_index()
+        encoding['item_id'] = encoding['item_id'].astype(int)
+        # save
+        encoding.to_csv(filename, index=False)
+    return encoding
 
 
 def create_cfs_mapping(select_n_filters=32, recompute=False):
@@ -370,6 +400,17 @@ def different_impressions(input_df):
     return input_df
 
 
+def padding(df, pad_mask, cols_to_pad, padding_len, padding_value):
+    for c in cols_to_pad:
+        # convert list of pad as array gets saved without comma in csv
+        df.loc[pad_mask, c] = (df
+                               .loc[pad_mask, c]
+                               .apply(lambda x: list(np.pad(x, (0, padding_len - len(x)),
+                                                            mode='constant',
+                                                            constant_values=padding_value))))
+    return df
+
+
 def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, recompute=False):
     nrows = nrows if nrows is not None else 15932993
     add_test_str = 'test_added' if add_test else 'no_test_added'
@@ -406,18 +447,42 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         df.drop(['filter_selection', 'sort_order'], axis=1, inplace=True)
         # convert impressions to int
         df['impressions'] = df['impressions'].apply(lambda x: [int(i) for i in x])
+
+        # add meta encodings of ratings and stars
+        meta_mapping = meta_encoding()
+        rating_cols = ['satisfactory rating', 'good rating', 'very good rating', 'excellent rating']
+        meta_mapping['ratings'] = meta_mapping[rating_cols].sum(axis=1)
+        star_cols = ['1 star', '2 star', '3 star', '4 star', '5 star']
+        for k, v in enumerate(star_cols):
+            meta_mapping[v] = meta_mapping[v] * (k+1)
+        meta_mapping['stars'] = meta_mapping[star_cols].max(axis=1)
+        meta_mapping = meta_mapping[['item_id', 'ratings', 'stars']]
+        item_rating_mapping = dict(meta_mapping[['item_id', 'ratings']].values)
+        item_star_mapping = dict(meta_mapping[['item_id', 'stars']].values)
+
+        def _map_rating(imps):
+            return [item_rating_mapping[i] for i in imps]
+
+        def _map_star(imps):
+            return [item_star_mapping[i] for i in imps]
+
+        df['ratings'] = df['impressions'].apply(_map_rating)
+        df['stars'] = df['impressions'].apply(_map_star)
+        del meta_mapping, item_star_mapping, item_star_mapping
+        gc.collect()
+
+        # padding
         df['n_imps'] = df['impressions'].str.len()
         padding_mask = df['n_imps'] < 25
         # pad zeros for length less than 25
         # cols_to_pad = ['impressions', 'last_click', 'prev_click', 'last_interact', 'prev_interact']
         cols_to_pad = ['impressions', 'prev_click', 'prev_interact']
-        for c in cols_to_pad:
-            # convert list of pad as array gets saved without comma in csv
-            df.loc[padding_mask, c] = (df
-                                       .loc[padding_mask, c]
-                                       .apply(lambda x: list(np.pad(x, (0, 25 - len(x)),
-                                                                    mode='constant',
-                                                                    constant_values=0))))
+        df = padding(df, pad_mask=padding_mask, cols_to_pad=cols_to_pad, padding_len=25, padding_value=0)
+
+        # pad ratings and stars
+        cols_to_pad = ['ratings', 'stars']
+        df = padding(df, pad_mask=padding_mask, cols_to_pad=cols_to_pad, padding_len=25, padding_value=np.nan)
+
         logger.debug(f'Nans:\n{df.isna().sum()}')
 
         # get target
@@ -425,6 +490,7 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
             logger.info('Assign target, first convert reference id to int'
                         'if needed convert non-integer str reference value to a str number')
             non_int = df['reference'].str.contains(r'[^\d]+')
+            logger.warning(f'There are {non_int} number of non-int references')
             df.loc[non_int, 'reference'] = '-1'
             df['reference'] = df['reference'].astype(int)
 
@@ -461,11 +527,15 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         df['prices'] = df['prices'].apply(lambda x: [float(p) for p in x])
         logger.info('Add price rank')
 
-        def normalize(ps):
-            p_arr = np.array(ps)
-            return p_arr / (p_arr.max())
-        # normalize within
-        df['prices'] = df['prices'].apply(normalize)
+        # def _normalize(ps):
+        #     p_arr = np.array(ps)
+        #     return p_arr / (p_arr.max())
+        # # normalize within
+        # df['prices'] = df['prices'].apply(_normalize)
+
+        def _add_mean_median(prices):
+            return pd.Series([np.mean(prices), np.median(prices)])
+        df[['mean_price', 'median_price']] = df.apply(lambda row: _add_mean_median(row['prices']), axis=1)
 
         def _rank_price(prices_row):
             ranks = rankdata(prices_row, method='dense')
@@ -473,18 +543,41 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
 
         # add price rank
         df['prices_rank'] = df['prices'].apply(_rank_price)
+
+        # add first half page price rank
+        def _rank_half_price(prices_row):
+            # rank first 12 prices
+            ranks = rankdata(prices_row[:12], method='dense')
+            return ranks / (ranks.max())
+
+        # add price rank
+        df['half_prices_rank'] = df['prices'].apply(_rank_half_price)
+
         logger.info('Pad 0s for prices length shorter than 25')
         padding_mask = df['prices'].str.len() < 25
-        df.loc[padding_mask, 'prices'] = (df
-                                          .loc[padding_mask, 'prices']
-                                          .apply(lambda x: np.pad(x, (0, 25 - len(x)),
-                                                                  mode='constant',
-                                                                  constant_values=padding_value)))
-        df.loc[padding_mask, 'prices_rank'] = (df
-                                               .loc[padding_mask, 'prices_rank']
-                                               .apply(lambda x: np.pad(x, (0, 25-len(x)),
-                                                                       mode='constant',
-                                                                       constant_values=padding_value)))
+        df = padding(df, pad_mask=padding_mask, cols_to_pad=['prices', 'prices_rank'],
+                     padding_len=25, padding_value=padding_value)
+        # pad the half page price rank
+        half_padding_mask = df['half_prices_rank'].str.len() < 12
+        df = padding(df, pad_mask=half_padding_mask, cols_to_pad=['half_prices_rank'],
+                     padding_len=12, padding_value=padding_value)
+
+        # df.loc[padding_mask, 'prices'] = (df
+        #                                   .loc[padding_mask, 'prices']
+        #                                   .apply(lambda x: np.pad(x, (0, 25 - len(x)),
+        #                                                           mode='constant',
+        #                                                           constant_values=padding_value)))
+        # df.loc[padding_mask, 'prices_rank'] = (df
+        #                                        .loc[padding_mask, 'prices_rank']
+        #                                        .apply(lambda x: np.pad(x, (0, 25-len(x)),
+        #                                                                mode='constant',
+        #                                                                constant_values=padding_value)))
+        # half_padding_mask = df['half_prices_rank'].str.len() < 12
+        # df.loc[half_padding_mask, 'half_prices_rank'] = (df
+        #                                                  .loc[half_padding_mask, 'half_prices_rank']
+        #                                                  .apply(lambda x: np.pad(x, (0, 12-len(x)),
+        #                                                                          mode='constant',
+        #                                                                          constant_values=padding_value)))
 
         # current_filters ==============================================================================================
         logger.info('Lower case current filters and split to list')
@@ -512,10 +605,17 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         # finally expand all column of list to columns
         # expand_cols = ['prices', 'prices_rank', 'last_click', 'prev_click', 'last_interact',
         #                'prev_interact', 'current_filters']
-        expand_cols = ['prices', 'prices_rank', 'prev_click', 'prev_interact', 'current_filters']
+        expand_cols = ['prices', 'prices_rank', 'prev_click', 'prev_interact', 'current_filters',
+                       'half_prices_rank', 'ratings', 'stars']
         for col in expand_cols:
             logger.info(f'Expanding on {col}')
             df = expand(df, col)
+
+        # make sure categorical columns are int
+        cat_cols = ['country', 'device', 'platform', 'fs', 'cs']
+        cat_cols = [c for c in df.columns if c in cat_cols]
+        for c in cat_cols:
+            df[c] = df[c].astype(int)
 
         # if test, only need to keep last row
         if mode == 'test':

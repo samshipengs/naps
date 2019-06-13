@@ -17,7 +17,7 @@ import lightgbm as lgb
 
 from create_model_inputs import create_model_inputs
 from utils import get_logger, get_data_path, check_gpu
-from plots import plot_hist, confusion_matrix, plot_imp_lgb
+from plots import plot_hist, confusion_matrix, plot_imp_lgb, compute_shap_multi_class
 
 
 logger = get_logger('train_lgb')
@@ -106,6 +106,7 @@ def train(train_inputs, params, only_last=False, retrain=False, verbose=True):
                                                                   iteration=clf.best_iteration)
             imp_df['features'] = x_trn.columns
             plot_imp_lgb(imp_df, fold)
+            compute_shap_multi_class(clf, x_val, x_val.columns, f'lgb_shap_{fold}')
 
             clf.save_model(model_filename)
 
@@ -212,18 +213,18 @@ def lgb_tuning(xtrain, n_searches=100):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': None,
+    setup = {'nrows': 1000000,
              'recompute_train': False,
-             'add_test': False,
+             'add_test': True,
              'only_last': False,
              'retrain': True,
              'recompute_test': False}
 
     params = {'boosting': 'gbdt',  # gbdt, dart, goss
-              'max_depth': -1,
+              'max_depth': 6,
               'num_leaves': 12,
               'feature_fraction': 0.8,
-              'num_boost_round': 5000,
+              'num_boost_round': 500,
               'early_stopping_rounds': 100,
               'learning_rate': 0.02,
               'objective': 'multiclass',
@@ -237,7 +238,7 @@ if __name__ == '__main__':
         params['bagging_fraction'] = 0.9
         params['bagging_freq'] = 1
 
-    if check_gpu:
+    if check_gpu():
         params['device'] = 'gpu'
         params['max_bin'] = 15  # 63
         params['gpu_use_dp'] = False

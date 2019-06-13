@@ -11,7 +11,7 @@ import catboost as cat
 
 from create_model_inputs import create_model_inputs
 from utils import get_logger, get_data_path, check_gpu
-from plots import plot_hist, confusion_matrix, plot_imp_cat, compute_shap
+from plots import plot_hist, confusion_matrix, plot_imp_cat, compute_shap_multi_class
 
 
 logger = get_logger('train_model')
@@ -105,12 +105,12 @@ def train(train_inputs, params, only_last=False, retrain=False):
             # ValueError: Length mismatch: Expected axis has 25 elements, new values have 2 elements
 
             # The Depthwise and Lossguide growing policies are not supported for feature importance
-            ftype = 'FeatureImportance'   # FeatureImportance, ShapValues, Interaction
+            ftype = 'ShapValues'   # FeatureImportance, ShapValues, Interaction
             logger.info(f'Getting feature importance with {ftype}')
             if ftype == 'ShapValues':
                 imp_data = cat.Pool(x_val, label=y_val, cat_features=cat_ind)
                 # imp = clf.get_feature_importance(data=imp_data, prettified=True, type=ftype)
-                compute_shap(clf, imp_data, x_val.columns, f'cat_{fold}')
+                compute_shap_multi_class(clf, imp_data, x_val.columns, f'cat_{fold}')
             else:
                 imp = clf.get_feature_importance(prettified=True, type=ftype)
             plot_imp_cat(imp, f'{ftype}_{fold}')
@@ -143,8 +143,8 @@ def train(train_inputs, params, only_last=False, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': None,
-             'recompute_train': True,
+    setup = {'nrows': 10000,
+             'recompute_train': False,
              'add_test': True,
              'only_last': False,
              'retrain': True,
@@ -154,7 +154,7 @@ if __name__ == '__main__':
     params = {'loss_function': 'MultiClass',
               'custom_metric': ['Accuracy'],
               'eval_metric': 'MultiClass',
-              'iterations': 10000,
+              'iterations': 200,
               'learning_rate': 0.02,
               'early_stopping_rounds': 100,
               # SymmetricTree, Depthwise, Lossguide (lossguide seems like not implemented)

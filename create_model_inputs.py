@@ -327,8 +327,8 @@ def compute_session_fts(df, nprocs=None):
     """
     t1 = time.time()
     if nprocs is None:
-        # nprocs = mp.cpu_count() - 1
-        nprocs = 2
+        nprocs = mp.cpu_count() - 1
+        # nprocs = 2
         logger.info('Using {} cores'.format(nprocs))
 
     # get all session ids
@@ -387,7 +387,7 @@ def different_impressions(input_df):
     def _diff(df):
         df['imp_shift'] = df['impressions'].shift(1)
         df['imp_shift'] = df['imp_shift'].fillna(method='ffill')
-        df['imp_changed'] = (df['impressions'] != df['imp_shift']).astype(int)
+        df['imp_changed'] = (df['impressions'] != df['imp_shift'])#.astype(int)
         # the imp_changed of first impression list is always nan
         first_imp = df['impressions'].notna()
         first_imp = first_imp[first_imp].index[0]
@@ -396,6 +396,8 @@ def different_impressions(input_df):
 
     input_df = grp.apply(_diff)
     input_df.drop('imp_shift', axis=1, inplace=True)
+    # chaneg it to float
+    input_df['imp_changed'] = input_df['imp_changed'].astype(float)
     logger.info('Done adding impression change indicator')
     return input_df
 

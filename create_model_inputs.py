@@ -505,6 +505,23 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         gc.collect()
 
         logger.info('Done meta mapping')
+        logger.info('Add mean and median of both ratings and stars')
+
+        def _add_mean_median(values):
+            return pd.Series([np.nanmean(values), np.nanmedian(values)])
+
+        df[['mean_rating', 'median_rating']] = df.apply(lambda row: _add_mean_median(row['ratings']), axis=1)
+        df[['mean_star', 'median_star']] = df.apply(lambda row: _add_mean_median(row['ratings']), axis=1)
+
+        logger.info('Transform ratings and stars to relative rank')
+
+        def _rank_value(row):
+            ranks = rankdata(row, method='dense')
+            return ranks / (ranks.max())
+
+        # add rating and star rank
+        df['ratings'] = df['ratings'].apply(_rank_value)
+        df['stars'] = df['stars'].apply(_rank_value)
 
         # padding
         df['n_imps'] = df['impressions'].str.len()
@@ -562,24 +579,21 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         logger.info('Split prices str to list and convert to int')
         df['prices'] = df['prices'].str.split('|')
         df['prices'] = df['prices'].apply(lambda x: [float(p) for p in x])
-        logger.info('Add price rank')
 
         # def _normalize(ps):
         #     p_arr = np.array(ps)
         #     return p_arr / (p_arr.max())
         # # normalize within
         # df['prices'] = df['prices'].apply(_normalize)
+        logger.info('Add mean and median of prices')
 
-        def _add_mean_median(prices):
-            return pd.Series([np.mean(prices), np.median(prices)])
+        # def _add_mean_median(prices):
+        #     return pd.Series([np.mean(prices), np.median(prices)])
         df[['mean_price', 'median_price']] = df.apply(lambda row: _add_mean_median(row['prices']), axis=1)
 
-        def _rank_price(prices_row):
-            ranks = rankdata(prices_row, method='dense')
-            return ranks / (ranks.max())
-
+        logger.info('Add price rank')
         # add price rank
-        df['prices_rank'] = df['prices'].apply(_rank_price)
+        df['prices_rank'] = df['prices'].apply(_rank_value)
 
         # add first half page price rank
         def _rank_half_price(prices_row):

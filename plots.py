@@ -112,7 +112,7 @@ def plot_shap_imp(imp, fold_, plot_n=20):
     plt.gcf().clear()
 
 
-def compute_shap(model, x_val, cv_i):
+def compute_shap(model, x_val, columns, cv_i):
     """
     Compute shap value
     :param model: trained model
@@ -132,7 +132,8 @@ def compute_shap(model, x_val, cv_i):
     avg_shap = np.mean(np.abs(shap_values_val), axis=0)
     # write the result to a df
     imp = pd.DataFrame()
-    imp['features'] = x_val.columns
+    print(len(columns), len(avg_shap))
+    imp['features'] = columns
     imp['feature_importance'] = avg_shap
     # plot the shap value
     plot_shap_imp(imp, cv_i, plot_n=15)

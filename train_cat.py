@@ -11,7 +11,7 @@ import catboost as cat
 
 from create_model_inputs import create_model_inputs
 from utils import get_logger, get_data_path, check_gpu
-from plots import plot_hist, confusion_matrix, plot_imp_cat
+from plots import plot_hist, confusion_matrix, plot_imp_cat, compute_shap
 
 
 logger = get_logger('train_model')
@@ -109,7 +109,8 @@ def train(train_inputs, params, only_last=False, retrain=False):
             logger.info(f'Getting feature importance with {ftype}')
             if ftype == 'ShapValues':
                 imp_data = cat.Pool(x_val, label=y_val, cat_features=cat_ind)
-                imp = clf.get_feature_importance(data=imp_data, prettified=True, type=ftype)
+                # imp = clf.get_feature_importance(data=imp_data, prettified=True, type=ftype)
+                compute_shap(clf, imp_data, x_val.columns, f'cat_{fold}')
             else:
                 imp = clf.get_feature_importance(prettified=True, type=ftype)
             plot_imp_cat(imp, f'{ftype}_{fold}')
@@ -142,12 +143,12 @@ def train(train_inputs, params, only_last=False, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 1000000,
+    setup = {'nrows': None,
              'recompute_train': True,
-             'add_test': False,
+             'add_test': True,
              'only_last': False,
              'retrain': True,
-             'recompute_test': False}
+             'recompute_test': True}
 
     device = 'GPU' if check_gpu() else 'CPU'
     params = {'loss_function': 'MultiClass',

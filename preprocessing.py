@@ -17,7 +17,7 @@ USE_COLS = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters',
 
 
 # 0)
-def remove_duplicates(df):
+def remove_duplicates(df, mode):
     """
     Drop rows with every columns the same except step
     :param df: dataframe, (almost) raw df from load_data
@@ -40,9 +40,10 @@ def remove_duplicates(df):
     # as different sessions
     step_duplicated_mask = df.duplicated(subset=['session_id', 'step'], keep=False)
     n_dups = step_duplicated_mask.sum()
+    logger.info(f'There are {step_duplicated_mask.sum()} number of records being duplicated step')
+
     if n_dups != 0:
-        logger.info(f'There are {step_duplicated_mask.sum()} number of records being duplicated step, converting '
-                    'them to a different session by adding a suffix DIFF')
+        logger.info('Converting step duplicated to a different session by adding a suffix DIFF')
         # select the ones that are valid and the ones contain duplicates
         duplicated_sids = df[step_duplicated_mask]['session_id'].unique()
         select_duplicated_mask = df['session_id'].isin(duplicated_sids)
@@ -68,12 +69,25 @@ def remove_duplicates(df):
                 suffix = '' if j == (len(boundary_ind) - 2) else f'DIFF{j}'
                 dup_i.loc[select_mask, 'session_id'] = dup_i.loc[select_mask, 'session_id'] + suffix
                 clean_session.append(dup_i.iloc[dup_i.index[select_mask]])
-            # print(dup_i[['session_id', 'timestamp', 'step']])
+            # print(dup_i[['session_id', 'timestamp', 'step', 'action_type', 'reference']])
             # print('='*30)
-        cleaned = pd.concat(clean_session, axis=0, ignore_index=True)
-        # make sure we did not add new rows or lose rows, i.e. the cleaned length stays the same with original duplicate
-        assert len(cleaned) == len(dup_df), f'Cleaned has different length = {len(cleaned)} comparing to original {len(dup_df)}'
-        df = pd.concat([valid_df, cleaned], axis=0, ignore_index=True)
+        if mode == 'train':
+            cleaned = pd.concat(clean_session, axis=0, ignore_index=True)
+            # make sure we did not add new rows or lose rows, i.e. the cleaned length stays the same with original duplicate
+            assert len(cleaned) == len(dup_df), f'Cleaned has different length = {len(cleaned)} comparing to original {len(dup_df)}'
+            df = pd.concat([valid_df, cleaned], axis=0, ignore_index=True)
+        elif mode == 'test':
+            # last processing if it's test mode, then we do not want to change the session that needs to submit
+            post_clean = []
+            for c in clean_session:
+                if pd.isna(c.iloc[-1]['reference']):
+                    post_clean.append(c)
+            cleaned = pd.concat(post_clean, axis=0, ignore_index=True)
+            cleaned['session_id'] = cleaned['session_id'].str.slice(stop=13) # 13 is the length of the session_id str
+            # print('\n'*3, cleaned[['session_id', 'timestamp', 'step', 'action_type', 'reference']])
+            df = pd.concat([valid_df, cleaned], axis=0, ignore_index=True)
+        else:
+             raise ValueError('Invalid mode')
         step_duplicated_mask = df.duplicated(subset=['session_id', 'step'], keep=False)
         n_dups = step_duplicated_mask.sum()
         assert n_dups == 0, f'There should be no more duplicated steps in one session but there is {n_dups} duplicates'
@@ -147,7 +161,7 @@ def basic_preprocess_sessions(df, mode, nrows, recompute=False):
         df = pd.read_parquet(filename)
     else:
         # 0) drop duplicates
-        df = remove_duplicates(df)
+        df = remove_duplicates(df, mode)
         # 1) clipping to last click-out if any
         logger.info('Clipping session dataframe up to last click out (if there is clickout)')
         clip_up_to_last_click_ = partial(clip_up_to_last_click, mode=mode)
@@ -309,7 +323,7 @@ def preprocess_data(mode, nrows=None, add_test=True, recompute=False):
 
 
 if __name__ == '__main__':
-    mode = 'train'
+    mode = 'test'
     nrows = None
     add_test = False
     preprocess_data(mode, nrows=nrows, add_test=add_test, recompute=True)

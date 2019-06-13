@@ -168,7 +168,7 @@ def basic_preprocess_sessions(df, mode, nrows, recompute=False):
         df = df.groupby('session_id').apply(clip_up_to_last_click_).reset_index(drop=True)
 
         # 2) select only valid sessions
-        logger.info(f'Select valid sessions, {mode} length before selecting: {len(df):,}')
+        logger.info(f'Checking valid sessions, {mode} length: {len(df):,}')
         filter_and_check_ = partial(filter_and_check, mode=mode)
         valid_clicked = df.groupby('session_id').apply(filter_and_check_)
         # if one right, there should be no invalid sessions at this point

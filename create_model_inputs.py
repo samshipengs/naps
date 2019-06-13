@@ -165,7 +165,7 @@ n_unique_cs = len(change_sort_order_mapping())
 _, n_unique_fs = filter_selection_mapping(select_n_filters=32)
 
 
-def fina_relative_ref_loc(row):
+def find_relative_ref_loc(row):
     last_ref = row['last_reference']
     if pd.isna(last_ref) or type(row['impressions']) != list:
         # first row
@@ -263,7 +263,7 @@ def compute_session_func(grp):
 
     # add impression relative location
     df['last_reference'] = df['reference'].shift(1)
-    df.loc[click_out_mask, 'last_reference_relative_loc'] = df.apply(fina_relative_ref_loc, axis=1)
+    df.loc[click_out_mask, 'last_reference_relative_loc'] = df.apply(find_relative_ref_loc, axis=1)
     df.drop('last_reference', axis=1, inplace=True)
 
     # only need click-out rows now
@@ -454,13 +454,16 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         logger.info('Adding ratings and stars from meta')
         meta_mapping = meta_encoding()
         rating_cols = ['satisfactory rating', 'good rating', 'very good rating', 'excellent rating']
+        # create rating column in meta by summing over all the ratings
         meta_mapping['ratings'] = meta_mapping[rating_cols].sum(axis=1)
+        # create star column in meta by multiplying the one hot with the star number
         star_cols = ['1 star', '2 star', '3 star', '4 star', '5 star']
         for k, v in enumerate(star_cols):
             meta_mapping[v] = meta_mapping[v] * (k+1)
+        # use the max as star value
         meta_mapping['stars'] = meta_mapping[star_cols].max(axis=1)
         meta_mapping = meta_mapping[['item_id', 'ratings', 'stars']]
-        meta_items = meta_mapping['item_id'].unique()
+        # meta_items = meta_mapping['item_id'].unique()
         item_rating_mapping = dict(meta_mapping[['item_id', 'ratings']].values)
         item_star_mapping = dict(meta_mapping[['item_id', 'stars']].values)
         del meta_mapping
@@ -479,17 +482,19 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
 
         # instead of iterate over each element in row, try to explode and map then collapse
         logger.info('Start rating mapping by exploding first, map then collapse')
-        imp_vals = df['impressions'].values.tolist()
+        n_nan_imps = df['impressions'].isna().sum()
+        assert n_nan_imps == 0, f'There should be 0 nan impressions but there are {n_nan_imps}'
+        imp_vals = df['impressions'].tolist()
         # grab the required repeating len
-        rs = [len(r) for r in imp_vals]
-        temp = pd.concat([np.repeat(df['session_id'], rs), np.repeat(df['step'], rs)], axis=1)
+        imps_lens = [len(imps) for imps in imp_vals]
+        temp = pd.concat([np.repeat(df['session_id'], imps_lens), np.repeat(df['step'], imps_lens)], axis=1)
 
         base = pd.DataFrame(np.column_stack((temp, np.concatenate(imp_vals))),
                             columns=['session_id', 'step', 'impressions'])
         base['ratings'] = base['impressions'].map(item_rating_mapping)
         base['stars'] = base['impressions'].map(item_star_mapping)
         base.drop('impressions', axis=1, inplace=True)
-        del item_rating_mapping, item_star_mapping, meta_items
+        del item_rating_mapping, item_star_mapping#, meta_items
         gc.collect()
         # collapse it back
         ratings = base.groupby(['session_id', 'step'])['ratings'].apply(list).reset_index()
@@ -513,7 +518,7 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
             return pd.Series([np.nanmean(values), np.nanmedian(values)])
 
         df[['mean_rating', 'median_rating']] = df.apply(lambda row: _add_mean_median(row['ratings']), axis=1)
-        df[['mean_star', 'median_star']] = df.apply(lambda row: _add_mean_median(row['ratings']), axis=1)
+        df[['mean_star', 'median_star']] = df.apply(lambda row: _add_mean_median(row['stars']), axis=1)
 
         logger.info('Transform ratings and stars to relative rank')
 

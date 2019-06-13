@@ -3,6 +3,7 @@ import datetime
 import numpy as np
 from functools import partial
 import pandas as pd
+from tqdm import tqdm
 from utils import load_data, get_logger, get_data_path, flogger
 
 
@@ -34,6 +35,48 @@ def remove_duplicates(df):
     cols = [c for c in df.columns if c != 'step']
     df = df.drop_duplicates(subset=cols, keep='last').reset_index(drop=True)
     logger.info(f'After dropping duplicates df shape: ({df.shape[0]:,}, {df.shape[1]})')
+
+    # there are sessions with duplicated steps, they seem like having different timestamp, we treat them
+    # as different sessions
+    step_duplicated_mask = df.duplicated(subset=['session_id', 'step'], keep=False)
+    n_dups = step_duplicated_mask.sum()
+    if n_dups != 0:
+        logger.info(f'There are {step_duplicated_mask.sum()} number of records being duplicated step, converting '
+                    'them to a different session by adding a suffix DIFF')
+        # select the ones that are valid and the ones contain duplicates
+        duplicated_sids = df[step_duplicated_mask]['session_id'].unique()
+        select_duplicated_mask = df['session_id'].isin(duplicated_sids)
+        valid_df = df[~select_duplicated_mask]
+        dup_df = df[select_duplicated_mask].reset_index(drop=True)
+
+        # there are sessions with multiple times of being duplicated e.g. 3 long gap session gets put into one
+        clean_session = []
+        for sid in tqdm(duplicated_sids):
+            dup_i = dup_df[dup_df['session_id'] == sid].reset_index(drop=True)
+            steps_i = dup_i['step'].values
+            # get boundary separation index
+            boundary_ind = [0]
+            for i in range(len(steps_i)-1):
+                if steps_i[i+1] <= steps_i[i]:
+                    boundary_ind.append(i+1)
+            boundary_ind.append(len(steps_i))
+            # print(boundary_ind)
+            for j in range(len(boundary_ind)-1):
+                # add a suffix
+                select_mask = (dup_i.index >= (boundary_ind[j])) & (dup_i.index < boundary_ind[j+1])
+                # we do not modify the last one
+                suffix = '' if j == (len(boundary_ind) - 2) else f'DIFF{j}'
+                dup_i.loc[select_mask, 'session_id'] = dup_i.loc[select_mask, 'session_id'] + suffix
+                clean_session.append(dup_i.iloc[dup_i.index[select_mask]])
+            # print(dup_i[['session_id', 'timestamp', 'step']])
+            # print('='*30)
+        cleaned = pd.concat(clean_session, axis=0, ignore_index=True)
+        # make sure we did not add new rows or lose rows, i.e. the cleaned length stays the same with original duplicate
+        assert len(cleaned) == len(dup_df), f'Cleaned has different length = {len(cleaned)} comparing to original {len(dup_df)}'
+        df = pd.concat([valid_df, cleaned], axis=0, ignore_index=True)
+        step_duplicated_mask = df.duplicated(subset=['session_id', 'step'], keep=False)
+        n_dups = step_duplicated_mask.sum()
+        assert n_dups == 0, f'There should be no more duplicated steps in one session but there is {n_dups} duplicates'
     return df
 
 
@@ -267,6 +310,6 @@ def preprocess_data(mode, nrows=None, add_test=True, recompute=False):
 
 if __name__ == '__main__':
     mode = 'train'
-    nrows = 1000000
+    nrows = None
     add_test = False
     preprocess_data(mode, nrows=nrows, add_test=add_test, recompute=True)

@@ -101,7 +101,7 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, r
                             categorical_feature=cat_ind,
                             # init_model=lgb.Booster(model_file=model_filename),
                             verbose_eval=100)
-            # grab feature importances
+            # grab feature importance
             imp_df = pd.DataFrame()
             imp_df['feature_importance'] = clf.feature_importance(importance_type='gain',
                                                                   iteration=clf.best_iteration)
@@ -225,7 +225,7 @@ def lgb_tuning(xtrain, base_params, n_searches=100):
 
 if __name__ == '__main__':
     setup = {'nrows': 1000000,
-             'tuning': True,
+             'tuning': False,
              'recompute_train': False,
              'add_test': True,
              'only_last': False,
@@ -243,11 +243,11 @@ if __name__ == '__main__':
                    'seed': 42
                    }
 
-    params = {'max_depth': 6,
-              'num_leaves': 12,
+    params = {'max_depth': 5,
+              'num_leaves': 10,
               'bagging_freq': 1,
-              'bagging_fraction': 0.8,
-              'feature_fraction': 0.8,
+              'bagging_fraction': 0.95,
+              'feature_fraction': 0.9,
               }
 
     if base_params['boosting'] != 'goss':

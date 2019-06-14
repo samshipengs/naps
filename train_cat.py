@@ -14,7 +14,7 @@ from utils import get_logger, get_data_path, check_gpu
 from plots import plot_hist, confusion_matrix, plot_imp_cat, compute_shap_multi_class
 
 
-logger = get_logger('train_model')
+logger = get_logger('train_cat')
 Filepath = get_data_path()
 # random splitting for cross-validation
 RS = 42
@@ -113,7 +113,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
                 compute_shap_multi_class(clf, imp_data, x_val.columns, f'cat_{fold}')
             else:
                 imp = clf.get_feature_importance(prettified=True, type=ftype)
-            plot_imp_cat(imp, f'{ftype}_{fold}')
+                plot_imp_cat(imp, f'{ftype}_{fold}')
             clf.save_model(model_filename)
 
         # make prediction
@@ -143,29 +143,29 @@ def train(train_inputs, params, only_last=False, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 10000,
+    setup = {'nrows': 5000000,
              'recompute_train': False,
              'add_test': True,
              'only_last': False,
              'retrain': True,
-             'recompute_test': True}
+             'recompute_test': False}
 
     device = 'GPU' if check_gpu() else 'CPU'
     params = {'loss_function': 'MultiClass',
               'custom_metric': ['Accuracy'],
               'eval_metric': 'MultiClass',
-              'iterations': 200,
-              'learning_rate': 0.02,
+              'iterations': 50000,
+              'learning_rate': 0.03,
               'early_stopping_rounds': 100,
               # SymmetricTree, Depthwise, Lossguide (lossguide seems like not implemented)
               'grow_policy': 'SymmetricTree',
-              'depth': 5,
+              'depth': 6,
               'bootstrap_type': 'Bayesian',  # Poisson, Bayesian, Bernoulli
-              # 'subsample': 0.66,
+              # 'subsample': 0.8,
               'bagging_temperature': 2,
               'l2_leaf_reg': 5,
-              'random_strength': 2,
-              'border_count': 50,
+              'random_strength': 3,
+              'border_count': 100,
               'task_type': device}
 
     if params['grow_policy'] == 'Lossguide':

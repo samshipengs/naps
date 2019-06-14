@@ -16,9 +16,10 @@ from sklearn.model_selection import KFold, ShuffleSplit
 import lightgbm as lgb
 
 from create_model_inputs import create_model_inputs
-from utils import get_logger, get_data_path, check_gpu
+from utils import get_logger, get_data_path, check_gpu, ignore_warnings
 from plots import plot_hist, confusion_matrix, plot_imp_lgb, compute_shap_multi_class
 
+ignore_warnings()
 
 logger = get_logger('train_lgb')
 Filepath = get_data_path()
@@ -40,7 +41,7 @@ def train(train_inputs, params, only_last=False, retrain=False, verbose=True):
     drop_cols = cf_cols  # + ['country', 'platform']
     # drop cf col for now
     train_inputs.drop(drop_cols, axis=1, inplace=True)
-    logger.info(f'train columns: {train_inputs.columns}')
+    logger.debug(f'train columns: {train_inputs.columns}')
     # if only use the last row of train_inputs to train
     if only_last:
         logger.info('Training ONLY with last row')
@@ -148,39 +149,49 @@ def lgb_tuning(xtrain, n_searches=100):
     """
     # specify the range of hyperparams values to go through
     dim_num_leaves = Integer(low=10, high=40, name='num_leaves')
-    dim_max_depth = Integer(low=5, high=40, name='max_depth')
-    dim_max_bin = Integer(low=50, high=400, name='max_bin')
-    dim_min_split_gain = Real(low=0, high=10, name='min_split_gain')
-    dim_min_child_weight = Real(low=0, high=10, name='min_child_weight')
-    dim_min_child_samples = Integer(low=10, high=50, name='min_child_samples')
-    dim_subsample = Real(low=0.1, high=0.99, name='subsample')
+    dim_max_depth = Integer(low=5, high=10, name='max_depth')
+    # dim_max_bin = Integer(low=50, high=100, name='max_bin')
+    # dim_min_split_gain = Real(low=0, high=10, name='min_split_gain')
+    # dim_min_child_weight = Real(low=0, high=10, name='min_child_weight')
+    # dim_min_child_samples = Integer(low=10, high=50, name='min_child_samples')
+    # dim_subsample = Real(low=0.1, high=0.99, name='subsample')
     dim_subsample_freq = Integer(low=1, high=10, name='subsample_freq')
     dim_colsample_bytree = Real(low=0.1, high=0.99, name='colsample_bytree')
-    dim_reg_alpha = Real(low=0, high=10, name='reg_alpha')
-    dim_reg_lambda = Real(low=0, high=10, name='reg_lambda')
+    # dim_reg_alpha = Real(low=0, high=10, name='reg_alpha')
+    # dim_reg_lambda = Real(low=0, high=10, name='reg_lambda')
 
     dimensions = [dim_num_leaves,
                   dim_max_depth,
-                  dim_max_bin,
-                  dim_min_split_gain,
-                  dim_min_child_weight,
-                  dim_min_child_samples,
-                  dim_subsample,
+                  # dim_max_bin,
+                  # dim_min_split_gain,
+                  # dim_min_child_weight,
+                  # dim_min_child_samples,
+                  # dim_subsample,
                   dim_subsample_freq,
                   dim_colsample_bytree,
-                  dim_reg_alpha,
-                  dim_reg_lambda]
+                  # dim_reg_alpha,
+                  # dim_reg_lambda
+                  ]
 
     @use_named_args(dimensions=dimensions)
-    def fitness(**params):
+    def fitness(**opt_params):
+        logger.info(f'Experimenting with params:\n{opt_params}')
+        params = opt_params
+        params['learning_rate'] = 0.02
+        params['num_boost_round'] = 500
+        params['objective'] = 'multiclass'
+        params['num_class'] = 25
+        params['metric'] = 'multi_logloss'
+        params['verbose'] = -1
+        params['seed'] = 42
         # train(train_inputs, params, only_last=False, retrain=False):
         eval_func = partial(train,
                             train_inputs=xtrain,
                             only_last=False,
-                            retrain=False,
+                            retrain=True,
                             verbose=False)
         # modeling from CV
-        _, mrrs = eval_func(params)
+        _, mrrs = eval_func(params=params)
         return -np.mean(mrrs)
 
     # search
@@ -213,7 +224,8 @@ def lgb_tuning(xtrain, n_searches=100):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 1000000,
+    setup = {'nrows': 5000000,
+             'tuning': True,
              'recompute_train': False,
              'add_test': True,
              'only_last': False,
@@ -252,50 +264,55 @@ if __name__ == '__main__':
     # first create training inputs
     train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], padding_value=np.nan,
                                        add_test=setup['add_test'], recompute=setup['recompute_train'])
-    # train the model
-    models, mrrs = train(train_inputs, params=params, only_last=setup['only_last'], retrain=setup['retrain'])
-    train_mrr = np.mean([mrr[0] for mrr in mrrs])
-    val_mrr = np.mean([mrr[1] for mrr in mrrs])
-    # get the test inputs
-    test_inputs = create_model_inputs(mode='test', padding_value=np.nan, recompute=setup['recompute_test'])
+    if setup['tuning']:
+        logger.info('Tuning')
+        lgb_tuning(train_inputs)
+    else:
+        logger.info('Training')
+        # train the model
+        models, mrrs = train(train_inputs, params=params, only_last=setup['only_last'], retrain=setup['retrain'])
+        train_mrr = np.mean([mrr[0] for mrr in mrrs])
+        val_mrr = np.mean([mrr[1] for mrr in mrrs])
+        # get the test inputs
+        test_inputs = create_model_inputs(mode='test', padding_value=np.nan, recompute=setup['recompute_test'])
 
-    # make predictions on test
-    logger.info('Load test sub csv')
-    test_sub = pd.read_csv(os.path.join(Filepath.sub_path, 'test_sub.csv'))
-    test_sub = test_sub.groupby('session_id').last().reset_index(drop=False)
-    test_sub.loc[:, 'impressions'] = test_sub.loc[:, 'impressions'].apply(lambda x: literal_eval(x))
+        # make predictions on test
+        logger.info('Load test sub csv')
+        test_sub = pd.read_csv(os.path.join(Filepath.sub_path, 'test_sub.csv'))
+        test_sub = test_sub.groupby('session_id').last().reset_index(drop=False)
+        test_sub.loc[:, 'impressions'] = test_sub.loc[:, 'impressions'].apply(lambda x: literal_eval(x))
 
-    sub_popular = pd.read_csv(os.path.join(Filepath.data_path, 'submission_popular.csv'))
-    sub_columns = sub_popular.columns
+        sub_popular = pd.read_csv(os.path.join(Filepath.data_path, 'submission_popular.csv'))
+        sub_columns = sub_popular.columns
 
-    # filter away the 0 padding and join list recs to string
-    def create_recs(recs):
-        return ' '.join([str(i) for i in recs if i != 0])
+        # filter away the 0 padding and join list recs to string
+        def create_recs(recs):
+            return ' '.join([str(i) for i in recs if i != 0])
 
-    test_predictions = []
-    for c, clf in enumerate(models):
-        logger.info(f'Generating predictions from model {c}')
-        test_pred = clf.predict(test_inputs)
-        test_predictions.append(test_pred)
+        test_predictions = []
+        for c, clf in enumerate(models):
+            logger.info(f'Generating predictions from model {c}')
+            test_pred = clf.predict(test_inputs)
+            test_predictions.append(test_pred)
 
-    logger.info('Generating submission by averaging cv predictions')
-    test_predictions = np.array(test_predictions).mean(axis=0)
-    test_pred_label = np.argsort(test_predictions)[:, ::-1]
-    np.save(os.path.join(Filepath.sub_path, f'test_pred_label.npy'), test_pred_label)
+        logger.info('Generating submission by averaging cv predictions')
+        test_predictions = np.array(test_predictions).mean(axis=0)
+        test_pred_label = np.argsort(test_predictions)[:, ::-1]
+        np.save(os.path.join(Filepath.sub_path, f'test_pred_label.npy'), test_pred_label)
 
-    test_impressions = np.array(list(test_sub['impressions'].values))
-    test_impressions_pred = test_impressions[np.arange(len(test_impressions))[:, None], test_pred_label]
-    test_sub.loc[:, 'recommendations'] = [create_recs(i) for i in test_impressions_pred]
-    del test_sub['impressions']
+        test_impressions = np.array(list(test_sub['impressions'].values))
+        test_impressions_pred = test_impressions[np.arange(len(test_impressions))[:, None], test_pred_label]
+        test_sub.loc[:, 'recommendations'] = [create_recs(i) for i in test_impressions_pred]
+        del test_sub['impressions']
 
-    logger.info(f'Before merging: {test_sub.shape}')
-    test_sub = pd.merge(test_sub, sub_popular, on='session_id')
-    logger.info(f'After merging: {test_sub.shape}')
-    del test_sub['item_recommendations']
-    test_sub.rename(columns={'recommendations': 'item_recommendations'}, inplace=True)
-    test_sub = test_sub[sub_columns]
-    current_time = dt.now().strftime('%m-%d-%H-%M')
-    test_sub.to_csv(os.path.join(Filepath.sub_path, f'lgb_sub_{current_time}_{train_mrr:.4f}_{val_mrr:.4f}.csv'),
-                    index=False)
-    logger.info('Done all')
+        logger.info(f'Before merging: {test_sub.shape}')
+        test_sub = pd.merge(test_sub, sub_popular, on='session_id')
+        logger.info(f'After merging: {test_sub.shape}')
+        del test_sub['item_recommendations']
+        test_sub.rename(columns={'recommendations': 'item_recommendations'}, inplace=True)
+        test_sub = test_sub[sub_columns]
+        current_time = dt.now().strftime('%m-%d-%H-%M')
+        test_sub.to_csv(os.path.join(Filepath.sub_path, f'lgb_sub_{current_time}_{train_mrr:.4f}_{val_mrr:.4f}.csv'),
+                        index=False)
+        logger.info('Done all')
 

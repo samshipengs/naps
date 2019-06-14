@@ -140,7 +140,7 @@ def train(train_inputs, params, only_last=False, retrain=False, verbose=True):
     return clfs, mrrs
 
 
-def lgb_tuning(xtrain, n_searches=100):
+def lgb_tuning(xtrain, base_params, n_searches=100):
     """
     Tuning hyperparams through Bayesian opt
     :param xtrain: input train dataframe
@@ -176,14 +176,10 @@ def lgb_tuning(xtrain, n_searches=100):
     @use_named_args(dimensions=dimensions)
     def fitness(**opt_params):
         logger.info(f'Experimenting with params:\n{opt_params}')
-        params = opt_params
-        params['learning_rate'] = 0.02
-        params['num_boost_round'] = 500
-        params['objective'] = 'multiclass'
-        params['num_class'] = 25
-        params['metric'] = 'multi_logloss'
-        params['verbose'] = -1
-        params['seed'] = 42
+        hyper_params = opt_params
+        # get base params
+        for base_k, base_v in base_params.items():
+            hyper_params[base_k] = base_v
         # train(train_inputs, params, only_last=False, retrain=False):
         eval_func = partial(train,
                             train_inputs=xtrain,
@@ -191,8 +187,8 @@ def lgb_tuning(xtrain, n_searches=100):
                             retrain=True,
                             verbose=False)
         # modeling from CV
-        _, mrrs = eval_func(params=params)
-        return -np.mean(mrrs)
+        _, cv_mrrs = eval_func(params=hyper_params)
+        return -np.mean(cv_mrrs)
 
     # search
     t1 = time.time()
@@ -232,18 +228,20 @@ if __name__ == '__main__':
              'retrain': True,
              'recompute_test': False}
 
-    params = {'boosting': 'gbdt',  # gbdt, dart, goss
-              'max_depth': 6,
+    base_params = {'boosting': 'gbdt',  # gbdt, dart, goss
+                   'num_boost_round': 500,
+                   'learning_rate': 0.02,
+                   'early_stopping_rounds': 100,
+                   'num_class': 25,
+                   'objective': 'multiclass',
+                   'metric': ['multi_logloss'],
+                   'verbose': -1,
+                   'seed': 42
+                   }
+
+    params = {'max_depth': 6,
               'num_leaves': 12,
               'feature_fraction': 0.8,
-              'num_boost_round': 500,
-              'early_stopping_rounds': 100,
-              'learning_rate': 0.02,
-              'objective': 'multiclass',
-              'num_class': 25,
-              'metric': ['multi_logloss'],
-              'verbose': -1,
-              'seed': 42,
               }
 
     if params['boosting'] != 'goss':
@@ -259,17 +257,20 @@ if __name__ == '__main__':
         logger.info('Using CPU')
 
     logger.info(f"\nSetup\n{'=' * 20}\n{pprint.pformat(setup)}\n{'=' * 20}")
-    logger.info(f"\nParams\n{'=' * 20}\n{pprint.pformat(params)}\n{'=' * 20}")
 
     # first create training inputs
     train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], padding_value=np.nan,
                                        add_test=setup['add_test'], recompute=setup['recompute_train'])
     if setup['tuning']:
         logger.info('Tuning')
-        lgb_tuning(train_inputs)
+        logger.info(f"\nBase params\n{'=' * 20}\n{pprint.pformat(base_params)}\n{'=' * 20}")
+        lgb_tuning(train_inputs, base_params=base_params)
     else:
         logger.info('Training')
+        for k, v in base_params:
+            params[k] = v
         # train the model
+        logger.info(f"\nParams\n{'=' * 20}\n{pprint.pformat(params)}\n{'=' * 20}")
         models, mrrs = train(train_inputs, params=params, only_last=setup['only_last'], retrain=setup['retrain'])
         train_mrr = np.mean([mrr[0] for mrr in mrrs])
         val_mrr = np.mean([mrr[1] for mrr in mrrs])

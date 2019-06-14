@@ -190,7 +190,9 @@ def lgb_tuning(xtrain, base_params, n_searches=100):
                             verbose=False)
         # modeling from CV
         _, cv_mrrs = eval_func(params=hyper_params)
-        return -np.mean(cv_mrrs)
+        # only grab the validation mrr
+        val_mrrs = [m[1] for m in cv_mrrs]
+        return -np.mean(val_mrrs)
 
     # search
     t1 = time.time()
@@ -223,7 +225,7 @@ def lgb_tuning(xtrain, base_params, n_searches=100):
 
 if __name__ == '__main__':
     setup = {'nrows': 1000000,
-             'tuning': False,
+             'tuning': True,
              'recompute_train': False,
              'add_test': True,
              'only_last': False,

@@ -32,7 +32,7 @@ def compute_mrr(y_pred, y_true):
     return np.mean(1 / (pred_label + 1))
 
 
-def train(train_inputs, params, only_last=False, retrain=False, verbose=True):
+def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, retrain=False, verbose=True):
     # path to where model is saved
     model_path = Filepath.model_path
 
@@ -52,7 +52,7 @@ def train(train_inputs, params, only_last=False, retrain=False, verbose=True):
     unique_session_ids = train_inputs['session_id'].unique()
 
     # kf = KFold(n_splits=5, shuffle=True, random_state=RS)
-    ss = ShuffleSplit(n_splits=5, test_size=0.15, random_state=RS)
+    ss = ShuffleSplit(n_splits=n_fold, test_size=test_fraction, random_state=RS)
 
     # record classifiers and mrr each training
     clfs = []
@@ -182,6 +182,8 @@ def lgb_tuning(xtrain, base_params, n_searches=100):
             hyper_params[base_k] = base_v
         # train(train_inputs, params, only_last=False, retrain=False):
         eval_func = partial(train,
+                            n_fold=2,
+                            test_fraction=0.15,
                             train_inputs=xtrain,
                             only_last=False,
                             retrain=True,
@@ -221,7 +223,7 @@ def lgb_tuning(xtrain, base_params, n_searches=100):
 
 if __name__ == '__main__':
     setup = {'nrows': 1000000,
-             'tuning': True,
+             'tuning': False,
              'recompute_train': False,
              'add_test': True,
              'only_last': False,
@@ -229,7 +231,7 @@ if __name__ == '__main__':
              'recompute_test': False}
 
     base_params = {'boosting': 'gbdt',  # gbdt, dart, goss
-                   'num_boost_round': 500,
+                   'num_boost_round': 1000,
                    'learning_rate': 0.02,
                    'early_stopping_rounds': 50,
                    'num_class': 25,
@@ -241,6 +243,8 @@ if __name__ == '__main__':
 
     params = {'max_depth': 6,
               'num_leaves': 12,
+              'bagging_freq': 1,
+              'bagging_fraction': 0.8,
               'feature_fraction': 0.8,
               }
 
@@ -267,7 +271,7 @@ if __name__ == '__main__':
         lgb_tuning(train_inputs, base_params=base_params)
     else:
         logger.info('Training')
-        for k, v in base_params:
+        for k, v in base_params.items():
             params[k] = v
         # train the model
         logger.info(f"\nParams\n{'=' * 20}\n{pprint.pformat(params)}\n{'=' * 20}")

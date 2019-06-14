@@ -328,7 +328,7 @@ def compute_session_fts(df, nprocs=None):
     t1 = time.time()
     if nprocs is None:
         nprocs = mp.cpu_count() - 1
-        # nprocs = 2
+        nprocs = 5
         logger.info('Using {} cores'.format(nprocs))
 
     # get all session ids

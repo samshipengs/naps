@@ -220,7 +220,7 @@ def lgb_tuning(xtrain, base_params, n_searches=100):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 5000000,
+    setup = {'nrows': 1000000,
              'tuning': True,
              'recompute_train': False,
              'add_test': True,
@@ -231,7 +231,7 @@ if __name__ == '__main__':
     base_params = {'boosting': 'gbdt',  # gbdt, dart, goss
                    'num_boost_round': 500,
                    'learning_rate': 0.02,
-                   'early_stopping_rounds': 100,
+                   'early_stopping_rounds': 50,
                    'num_class': 25,
                    'objective': 'multiclass',
                    'metric': ['multi_logloss'],
@@ -244,7 +244,7 @@ if __name__ == '__main__':
               'feature_fraction': 0.8,
               }
 
-    if params['boosting'] != 'goss':
+    if base_params['boosting'] != 'goss':
         params['bagging_fraction'] = 0.9
         params['bagging_freq'] = 1
 

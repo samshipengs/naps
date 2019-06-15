@@ -137,7 +137,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
         # create model
         model_filename = os.path.join(model_path, f'nn_cv{fold}.model')
         if os.path.isfile(model_filename) and not retrain:
-            logger.info(f'Loading model from existing {model_filename}')
+            logger.info(f"Loading model from existing '{model_filename}'")
             model = load_model(model_filename)
         else:
             model = build_model()

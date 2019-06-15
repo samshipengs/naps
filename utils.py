@@ -72,7 +72,8 @@ def get_logger(name):
         # console handler
         c_handler = logging.StreamHandler()
         c_handler.setLevel(logging.INFO)
-        c_formatter = logging.Formatter(formats, '%m-%d %H:%M:%S')
+        c_formats = '[%(asctime)s|%(name)-19s:%(lineno)-3d|%(funcName)-25s|%(levelname)s] %(message)s'
+        c_formatter = logging.Formatter(c_formats, '%d|%H:%M:%S')
         c_handler.setFormatter(c_formatter)
         logger.addHandler(c_handler)
     return logger
@@ -147,7 +148,7 @@ def meta_encoding(recompute=False):
     filepath = Filepath.gbm_cache_path
     filename = os.path.join(filepath, 'meta_encodings.csv')
     if os.path.isfile(filename) and not recompute:
-        logger.info(f'Load from existing file: {filename}')
+        logger.info(f"Load from existing file: '{filename}'")
         encoding = pd.read_csv(filename)
     else:
         meta = load_data('item_metadata')

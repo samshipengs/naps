@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import pprint
 import pandas as pd
@@ -9,7 +10,7 @@ from ast import literal_eval
 from sklearn.model_selection import KFold, ShuffleSplit
 import catboost as cat
 
-from create_model_inputs import create_model_inputs
+from create_model_inputs import create_model_inputs, CATEGORICAL_COLUMNS
 from utils import get_logger, get_data_path, check_gpu
 from plots import plot_hist, confusion_matrix, plot_imp_cat, compute_shap_multi_class
 
@@ -25,11 +26,12 @@ def train(train_inputs, params, only_last=False, retrain=False):
     model_path = Filepath.model_path
 
     # specify some columns that we do not want in training
-    cf_cols = [c for c in train_inputs.columns if 'current_filters' in c]
-    drop_cols = cf_cols   # + ['country', 'platform']
+    cf_cols = [i for i in train_inputs.columns if 'current_filters' in i]
+    price_cols = [i for i in train_inputs.columns if re.match(r'prices_\d', i)]
+    drop_cols = cf_cols + price_cols  # + ['country', 'platform']
     # drop cf col for now
     train_inputs.drop(drop_cols, axis=1, inplace=True)
-    logger.info(f'train columns: {train_inputs.columns}')
+    logger.info(f'train columns:\n{list(train_inputs.columns)}')
     # if only use the last row of train_inputs to train
     if only_last:
         logger.info('Training ONLY with last row')
@@ -66,13 +68,12 @@ def train(train_inputs, params, only_last=False, retrain=False):
         x_val.drop(['session_id', 'target'], axis=1, inplace=True)
 
         # get categorical index
-        cat_cols = ['country', 'device', 'platform', 'fs', 'cs']
-        cat_ind = [k for k, v in enumerate(x_trn.columns) if v in cat_cols]
+        cat_ind = [k for k, v in enumerate(x_trn.columns) if v in CATEGORICAL_COLUMNS]
         # =====================================================================================
         # create model
         model_filename = os.path.join(model_path, f'cat_cv{fold}.model')
         if os.path.isfile(model_filename) and not retrain:
-            logger.info(f'Loading model from existing {model_filename}')
+            logger.info(f"Loading model from existing '{model_filename}'")
             # parameters not required.
             clf = cat.CatBoostClassifier()
             clf.load_model(model_filename)
@@ -84,25 +85,6 @@ def train(train_inputs, params, only_last=False, retrain=False):
                     eval_set=(x_val, y_val),
                     verbose=100,
                     plot=False)
-            # TODO
-            # fix
-            # Shrink model to first 6379 iterations.
-            # [06-09 23:10:22 - train_model-89 - train - INFO] Getting feature importance with ShapValues
-            # Traceback (most recent call last):
-            #   File "train_cat.py", line 169, in <module>
-            #     # train the model
-            #   File "train_cat.py", line 95, in train
-            #     plot_imp_cat(imp, f'{ftype}_{fold}')
-            #   File "/home/sam/Desktop/naps/plots.py", line 58, in plot_imp_cat
-            #     imp.columns = ['features', 'feature_importance']
-            #   File "/home/sam/anaconda3/lib/python3.6/site-packages/pandas/core/generic.py", line 5080, in __setattr__
-            #     return object.__setattr__(self, name, value)
-            #   File "pandas/_libs/properties.pyx", line 69, in pandas._libs.properties.AxisProperty.__set__
-            #   File "/home/sam/anaconda3/lib/python3.6/site-packages/pandas/core/generic.py", line 638, in _set_axis
-            #     self._data.set_axis(axis, labels)
-            #   File "/home/sam/anaconda3/lib/python3.6/site-packages/pandas/core/internals/managers.py", line 155, in set_axis
-            #     'values have {new} elements'.format(old=old_len, new=new_len))
-            # ValueError: Length mismatch: Expected axis has 25 elements, new values have 2 elements
 
             # The Depthwise and Lossguide growing policies are not supported for feature importance
             ftype = 'ShapValues'   # FeatureImportance, ShapValues, Interaction
@@ -145,7 +127,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
 if __name__ == '__main__':
     setup = {'nrows': 5000000,
              'recompute_train': False,
-             'add_test': True,
+             'add_test': False,
              'only_last': False,
              'retrain': True,
              'recompute_test': False}
@@ -154,8 +136,8 @@ if __name__ == '__main__':
     params = {'loss_function': 'MultiClass',
               'custom_metric': ['Accuracy'],
               'eval_metric': 'MultiClass',
-              'iterations': 50000,
-              'learning_rate': 0.03,
+              'iterations': 10000,
+              'learning_rate': 0.02,
               'early_stopping_rounds': 100,
               # SymmetricTree, Depthwise, Lossguide (lossguide seems like not implemented)
               'grow_policy': 'SymmetricTree',

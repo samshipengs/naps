@@ -12,6 +12,8 @@ from preprocessing import preprocess_data, create_action_type_mapping
 logger = get_logger('create_model_inputs')
 Filepath = get_data_path()
 
+CATEGORICAL_COLUMNS = ['country', 'device', 'platform', 'fs', 'sort_order', 'last_action_type']
+
 
 # def meta_encoding(recompute=False):
 #     """
@@ -57,7 +59,7 @@ def meta_encoding(recompute=False):
     filepath = Filepath.gbm_cache_path
     filename = os.path.join(filepath, 'meta_encodings.csv')
     if os.path.isfile(filename) and not recompute:
-        logger.info(f'Load from existing file: {filename}')
+        logger.info(f"Load from existing file: '{filename}'")
         encoding = pd.read_csv(filename)
     else:
         meta = load_data('item_metadata')
@@ -94,7 +96,7 @@ def create_cfs_mapping(select_n_filters=32, recompute=False):
     """
     filename = os.path.join(Filepath.gbm_cache_path, 'filters_mapping.npy')
     if os.path.isfile(filename) and not recompute:
-        logger.info(f'Load filters mapping from existing: {filename}')
+        logger.info(f"Load current filters mapping from existing: '{filename}'")
         filters2natural = np.load(filename).item()
     else:
         train = load_data('train', usecols=['current_filters'])
@@ -136,7 +138,7 @@ def change_sort_order_mapping():
 def filter_selection_mapping(select_n_filters=32, recompute=False):
     filename = os.path.join(Filepath.gbm_cache_path, 'filters_selection_mapping.npy')
     if os.path.isfile(filename) and not recompute:
-        logger.info(f'Load filters mapping from existing: {filename}')
+        logger.info(f"Load filters mapping from existing: '{filename}'")
         fs2natural = np.load(filename).item()
     else:
         train = load_data('train', usecols=['action_type', 'reference'])
@@ -160,7 +162,7 @@ def filter_selection_mapping(select_n_filters=32, recompute=False):
     return fs2natural, select_n_filters + 1
 
 
-_, n_unique_actions = create_action_type_mapping(group=True, recompute=False)
+action_type2natural, n_unique_actions = create_action_type_mapping()
 n_unique_cs = len(change_sort_order_mapping())
 _, n_unique_fs = filter_selection_mapping(select_n_filters=32)
 
@@ -177,10 +179,6 @@ def find_relative_ref_loc(row):
             return (imps.index(last_ref)+1)/25
         else:
             return np.nan
-        # except Exception as e:
-        #     print(e)
-        #     print(row)
-        #     print(last_ref)
 
 
 def compute_session_func(grp):
@@ -195,25 +193,21 @@ def compute_session_func(grp):
 
     # session_time duration (subtract the min)
     df['session_duration'] = (df['timestamp'] - df['timestamp'].min()).dt.total_seconds()
+    # but if it is the first row, it is always nan
+    if len(df) == 0:
+        df['session_duration'] = np.nan
 
     # get successive time difference
     df['last_duration'] = df['timestamp'].diff().dt.total_seconds()
     # maybe we dont fillna with 0 as it could be implying a very short time interval
-    # df['last_duration'] = df['last_duration'].fillna(0)
     df.drop('timestamp', axis=1, inplace=True)
 
-    # get action type info of last previous row (clickout, search for, interaction, feature selection, change of sort)
-    action_cols = ['co', 'search', 'inter', 'fs', 'cs']
-    action_types = pd.DataFrame(np.eye(n_unique_actions, dtype=int)[df['action_type'].values],
-                                columns=action_cols, index=df.index)
-    df = pd.concat([df, action_types], axis=1)
-    # grab the actual value of the filter_selection and sort_order
-    df['fs'] = df['fs'] * df['filter_selection']
-    df['cs'] = df['cs'] * df['sort_order']
-
+    # instead of ohe, just use it as categorical input
     # shift down
-    df[action_cols] = df[action_cols].shift(1)
-    
+    df['last_action_type'] = df['action_type'].shift(1)
+    df['fs'] = df['fs'].shift(1)
+    df['sort_order'] = df['sort_order'].shift(1)
+
     # in case there is just one row, use list comprehension instead of np concat
     impressions = df['impressions'].dropna().values
     unique_items = list(set([j for i in impressions for j in i] + list(df['reference'].unique())))
@@ -239,24 +233,8 @@ def compute_session_func(grp):
     df_temp.fillna(0, inplace=True)  # we need to fillna otherwise the cumsum would not compute on row with nan value
     prev_click_df = df_temp[click_cols].shift(1).cumsum()
     prev_interact_df = df_temp[interact_cols].shift(1).cumsum()
-
-    # LAST ROW AND INTERACTION SEEMS LIKE UNNECESSARY, COMMENT OUT FOR NOW
-#     # now we need to get the last row clickout and interaction
-#     # fillna for grabing the last info (cannot ffill in the beginning as it will create extra sum in cumsum)
-#     df.fillna(method='ffill', inplace=True)
-#     # get last one
-#     last_click = df[click_cols].shift(1)
-#     # name last ones
-#     last_click.columns = [f'last_click_{i}' for i in range(len(unique_items))]
-#     last_interact = df[interact_cols].shift(1)
-#     # name last ones
-#     last_interact.columns = [f'last_interact_{i}' for i in range(len(unique_items))]
-#     # remove the orginal click and interact cols, swap on the last and prev clicks and interaction cols
-#     df.drop(click_cols + interact_cols, axis=1, inplace=True)
-#     # concat all
-#     df = pd.concat([df, last_click, prev_click_df, last_interact, prev_interact_df], axis=1)
     
-    # remove the orginal click and interact cols, swap on the last and prev clicks and interaction cols
+    # remove the original click and interact cols, swap on the last and prev clicks and interaction cols
     df.drop(click_cols + interact_cols, axis=1, inplace=True)
     # concat all
     df = pd.concat([df, prev_click_df, prev_interact_df], axis=1)
@@ -268,31 +246,18 @@ def compute_session_func(grp):
 
     # only need click-out rows now
     df = df[click_out_mask].reset_index(drop=True)
-    # fillna of missing fs and cs with the largest encoding + 1, which is the n_unique
-    df['fs'] = df['fs'].fillna(n_unique_fs)
-    df['cs'] = df['cs'].fillna(n_unique_cs)
-    # fillna for nans in last click or interact for example
-#     df.fillna(0, inplace=True) # if no good reason to fillna with 0, keep it commented out
-#     df[last_click.columns] = df[last_click.columns].fillna(0)
-#     df[last_interact.columns] = df[last_interact.columns].fillna(0)
 
     # now select only the ones that is needed for each row
     def match(row, cols):
         impressions_natural = [temp_mapping[imp] for imp in row['impressions']]
         return row[cols].values[impressions_natural]
 
-#     iter_cols = {'last_click': last_click.columns, 'prev_click': click_cols,
-#                  'last_interact': last_interact.columns, 'prev_interact': interact_cols}
     iter_cols = {'prev_click': click_cols, 'prev_interact': interact_cols}
     for k, v in iter_cols.items():
         func = partial(match, cols=v)
         df[k] = df.apply(func, axis=1)
         df.drop(v, axis=1, inplace=True)
-    # # temp
-    # prev_interact_cols = [c for c in df.columns if 'prev_interact' in c]
-    # prev_click_cols = [c for c in df.columns if 'prev_click' in c]
-    # df[prev_interact_cols] = df[prev_interact_cols].fillna(0)
-    # df[prev_click_cols] = df[prev_click_cols].fillna(0)
+
     return df
 
 
@@ -328,7 +293,7 @@ def compute_session_fts(df, nprocs=None):
     t1 = time.time()
     if nprocs is None:
         nprocs = mp.cpu_count() - 1
-        nprocs = 5
+        nprocs = 6
         logger.info('Using {} cores'.format(nprocs))
 
     # get all session ids
@@ -421,7 +386,7 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
     filename = os.path.join(Filepath.gbm_cache_path, f'{mode}_inputs_{nrows}_{add_test_str}.snappy')
 
     if os.path.isfile(filename) and not recompute:
-        logger.info(f'Load from existing {filename}')
+        logger.info(f"Load from existing '{filename}'")
         df = pd.read_parquet(filename)
     else:
         logger.info(f'Prepare {mode} data')
@@ -429,11 +394,12 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         df = preprocess_data(mode, nrows=nrows, add_test=add_test, recompute=False)
         # ==============================================================================================================
         # add fs (filter selection encoding) and change of sort order encoding, see mapping in preprocessing
-        fs_mask = df['action_type'] == 3
-        sort_mask = df['action_type'] == 4
+
+        fs_mask = df['action_type'] == action_type2natural['filter selection']
+        sort_mask = df['action_type'] == action_type2natural['change of sort order']
         fs_mapper, _ = filter_selection_mapping(select_n_filters=32)
         change_sort_order_mapper = change_sort_order_mapping()
-        df.loc[fs_mask, 'filter_selection'] = df.loc[fs_mask, 'reference'].map(fs_mapper)
+        df.loc[fs_mask, 'fs'] = df.loc[fs_mask, 'reference'].map(fs_mapper)
         df.loc[sort_mask, 'sort_order'] = df.loc[sort_mask, 'reference'].map(change_sort_order_mapper)
 
         # add impression change indicator
@@ -445,8 +411,7 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         # get some numeric and interactions ============================================================================
         logger.info('Compute session features')
         df = compute_session_fts(df)
-        # remove feature selection and sort_order columns
-        df.drop(['filter_selection', 'sort_order'], axis=1, inplace=True)
+
         # convert impressions to int
         df['impressions'] = df['impressions'].apply(lambda x: [int(i) for i in x])
 
@@ -494,7 +459,7 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         base['ratings'] = base['impressions'].map(item_rating_mapping)
         base['stars'] = base['impressions'].map(item_star_mapping)
         base.drop('impressions', axis=1, inplace=True)
-        del item_rating_mapping, item_star_mapping#, meta_items
+        del item_rating_mapping, item_star_mapping  #, meta_items
         gc.collect()
         # collapse it back
         ratings = base.groupby(['session_id', 'step'])['ratings'].apply(list).reset_index()
@@ -546,13 +511,23 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
 
         # get target
         if mode == 'train':
-            logger.info('Assign target, first convert reference id to int'
-                        'if needed convert non-integer str reference value to a str number')
+            logger.info('Assign target in train mode, first convert reference id to int')
+            # non-integer reference values
             non_int = df['reference'].str.contains(r'[^\d]+')
             n_non_int = non_int.sum()
             if n_non_int != 0:
                 logger.warning(f'There are {n_non_int} number of non-int references')
                 df.loc[non_int, 'reference'] = '-1'
+
+            # nan reference values
+            nan_ref = df['reference'].isna()
+            n_nan_ref = nan_ref.sum()
+            if n_nan_ref != 0:
+                logger.warning(f'There are {n_nan_ref} number of nan references, drop them')
+                logger.warning(f'{df[nan_ref]["session_id"].head()}')
+                df = df[~nan_ref].reset_index(drop=True)
+
+            # now convert to int
             df['reference'] = df['reference'].astype(int)
 
             # filter out nan rows with reference_id not in impressions list, since if the true target in test
@@ -568,7 +543,7 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
             df['target'] = df.apply(assign_target, axis=1)
             logger.info('Remove the nan target, which comes from the ones whose reference id is not in impression list')
             nan_target = df['target'].isna()
-            logger.info(f'There are {nan_target.sum()} number of nan targets')
+            logger.info(f'There are {nan_target.sum()} number of nan target (reference id is not present in impressions)')
             # drop the ones whose reference is not in the impression list
             df = df[~nan_target].reset_index(drop=True)
             df['target'] = df['target'].astype(int)
@@ -602,7 +577,7 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         # add price rank
         df['prices_rank'] = df['prices'].apply(_rank_value)
 
-        # add first half page price rank
+        # add first half page (first 12) price rank
         def _rank_half_price(prices_row):
             # rank first 12 prices
             ranks = rankdata(prices_row[:12], method='dense')
@@ -670,8 +645,11 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
             df = expand(df, col)
 
         # make sure categorical columns are int
-        cat_cols = ['country', 'device', 'platform', 'fs', 'cs']
-        cat_cols = [c for c in df.columns if c in cat_cols]
+        cat_cols = [c for c in df.columns if c in CATEGORICAL_COLUMNS]
+        # there are nans in fs and sort_order
+        df['fs'] = df['fs'].fillna(n_unique_fs)
+        df['sort_order'] = df['sort_order'].fillna(n_unique_cs)
+        df['last_action_type'] = df['last_action_type'].fillna(n_unique_actions)
         for c in cat_cols:
             df[c] = df[c].astype(int)
 
@@ -679,9 +657,9 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         if mode == 'test':
             df = df.groupby('session_id').last().reset_index(drop=True)
         # save
-        df.to_parquet(filename)
+        df.to_parquet(filename, index=False)
         logger.info(f'Total {mode} data input creation took: {(time.time()-t_init)/60:.2f} mins')
-    logger.warning("Note: no features were normalized!")
+    logger.info('=' * 60)
     return df
 
 

@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import pprint
 import pandas as pd
@@ -15,7 +16,7 @@ from skopt.utils import use_named_args
 from sklearn.model_selection import KFold, ShuffleSplit
 import lightgbm as lgb
 
-from create_model_inputs import create_model_inputs
+from create_model_inputs import create_model_inputs, CATEGORICAL_COLUMNS
 from utils import get_logger, get_data_path, check_gpu, ignore_warnings
 from plots import plot_hist, confusion_matrix, plot_imp_lgb, compute_shap_multi_class
 
@@ -37,8 +38,9 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, r
     model_path = Filepath.model_path
 
     # specify some columns that we do not want in training
-    cf_cols = [c for c in train_inputs.columns if 'current_filters' in c]
-    drop_cols = cf_cols  # + ['country', 'platform']
+    cf_cols = [i for i in train_inputs.columns if 'current_filters' in i]
+    price_cols = [i for i in train_inputs.columns if re.match(r'prices_\d', i)]
+    drop_cols = cf_cols + price_cols  # + ['country', 'platform']
     # drop cf col for now
     train_inputs.drop(drop_cols, axis=1, inplace=True)
     logger.debug(f'train columns: {train_inputs.columns}')
@@ -79,8 +81,7 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, r
         x_val.drop(['session_id', 'target'], axis=1, inplace=True)
 
         # get categorical index
-        cat_cols = ['country', 'device', 'platform', 'fs', 'cs']
-        cat_ind = [k for k, v in enumerate(x_trn.columns) if v in cat_cols]
+        cat_ind = [k for k, v in enumerate(x_trn.columns) if v in CATEGORICAL_COLUMNS]
         # =====================================================================================
 
         lgb_trn_data = lgb.Dataset(x_trn, label=y_trn, free_raw_data=False)
@@ -89,7 +90,7 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, r
         # create model
         model_filename = os.path.join(model_path, f'lgb_cv{fold}.model')
         if os.path.isfile(model_filename) and not retrain:
-            logger.info(f'Loading model from existing {model_filename}')
+            logger.info(f"Loading model from existing '{model_filename}'")
             # parameters not required.
             clf = lgb.Booster(model_file=model_filename)
         else:
@@ -216,7 +217,7 @@ def lgb_tuning(xtrain, base_params, n_searches=100):
         print(f'{v.name}: {search_result.x[k]}')
     best_params_name = os.path.join(Filepath.opt_path, f'best_params_{best_score:.5f}.npy')
     np.save(best_params_name, best_params)
-    logger.info('Saved best_params to {}'.format(best_params_name))
+    logger.info(f"Saved best_params to '{best_params_name}'")
     # plot gp convergence
     plot_convergence(search_result)
     plt.savefig(os.path.join(Filepath.opt_path, 'gp_convergence.png'))
@@ -224,10 +225,10 @@ def lgb_tuning(xtrain, base_params, n_searches=100):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 1000000,
-             'tuning': False,
+    setup = {'nrows': 5000000,
+             'tuning': True,
              'recompute_train': False,
-             'add_test': True,
+             'add_test': False,
              'only_last': False,
              'retrain': True,
              'recompute_test': False}

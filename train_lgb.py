@@ -67,7 +67,7 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
         # get session_id used for train
         trn_ids = unique_session_ids[trn_ind]
         trn_mask = train_inputs['session_id'].isin(trn_ids)
-        logger.info(f'Training fold {fold}: train len={trn_mask.sum():,} | val ids len={(~trn_mask).sum():,}')
+        logger.info(f'Training fold {fold}: train len={trn_mask.sum():,} | val len={(~trn_mask).sum():,}')
 
         x_trn, x_val = (train_inputs[trn_mask].reset_index(drop=True),
                         train_inputs[~trn_mask].reset_index(drop=True))

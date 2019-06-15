@@ -33,7 +33,8 @@ def compute_mrr(y_pred, y_true):
     return np.mean(1 / (pred_label + 1))
 
 
-def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, retrain=False, verbose=True):
+def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, feature_importance=True,
+          retrain=False, verbose=True):
     # path to where model is saved
     model_path = Filepath.model_path
 
@@ -102,13 +103,15 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, r
                             categorical_feature=cat_ind,
                             # init_model=lgb.Booster(model_file=model_filename),
                             verbose_eval=100)
-            # grab feature importance
-            imp_df = pd.DataFrame()
-            imp_df['feature_importance'] = clf.feature_importance(importance_type='gain',
-                                                                  iteration=clf.best_iteration)
-            imp_df['features'] = x_trn.columns
-            plot_imp_lgb(imp_df, fold)
-            compute_shap_multi_class(clf, x_val, x_val.columns, f'lgb_shap_{fold}')
+            if feature_importance:
+                logger.info('Compute feature importance')
+                # grab feature importance
+                imp_df = pd.DataFrame()
+                imp_df['feature_importance'] = clf.feature_importance(importance_type='gain',
+                                                                      iteration=clf.best_iteration)
+                imp_df['features'] = x_trn.columns
+                plot_imp_lgb(imp_df, fold)
+                compute_shap_multi_class(clf, x_val, x_val.columns, f'lgb_shap_{fold}')
 
             clf.save_model(model_filename)
 
@@ -137,11 +140,11 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, r
         if verbose:
             logger.info(f'Done training {fold}, took: {(time.time()-t1)/60:.2f} mins')
 
-    logger.info(f'Total time took: {(time.time()-t_init)/60:.2f} mins')
+    logger.info(f'Total cv time took: {(time.time()-t_init)/60:.2f} mins')
     return clfs, mrrs
 
 
-def lgb_tuning(xtrain, base_params, n_searches=100):
+def lgb_tuning(xtrain, base_params, n_searches=200):
     """
     Tuning hyperparams through Bayesian opt
     :param xtrain: input train dataframe
@@ -187,6 +190,7 @@ def lgb_tuning(xtrain, base_params, n_searches=100):
                             test_fraction=0.15,
                             train_inputs=xtrain,
                             only_last=False,
+                            feature_importance=False,
                             retrain=True,
                             verbose=False)
         # modeling from CV
@@ -234,7 +238,7 @@ if __name__ == '__main__':
              'recompute_test': False}
 
     base_params = {'boosting': 'gbdt',  # gbdt, dart, goss
-                   'num_boost_round': 1000,
+                   'num_boost_round': 2000,
                    'learning_rate': 0.02,
                    'early_stopping_rounds': 50,
                    'num_class': 25,

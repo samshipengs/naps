@@ -66,6 +66,7 @@ def plot_imp_cat(data, fold_, plot_n=15):
     imp_asc[:plot_n].plot(x='features', y='feature_importance', ax=axes[1], kind='barh', grid=True)
     plt.tight_layout()
     fig.savefig(os.path.join(IMP_PATH, f'cat_{fold_}.png'))
+    plt.gcf().clear()
 
 
 def plot_imp_lgb(imp_df, fold_, plot_n=15):
@@ -129,7 +130,7 @@ def compute_shap_multi_class(model, x_val, columns, fold_):
     shap.summary_plot(shap_values_val, x_val, show=False, feature_names=columns, max_display=25)
     plt.tight_layout()
     plt.savefig(os.path.join(IMP_PATH, f'shap_{fold_}.png'))
-    plt.clf()
+    plt.gcf().clear()
 
     # print(np.array(shap_values_val).shape)
     # # compute the average (abs) shap values for each features

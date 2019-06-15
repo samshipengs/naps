@@ -156,7 +156,7 @@ def lgb_tuning(xtrain, base_params, n_searches=100):
     # dim_min_child_weight = Real(low=0, high=10, name='min_child_weight')
     # dim_min_child_samples = Integer(low=10, high=50, name='min_child_samples')
     # dim_subsample = Real(low=0.1, high=0.99, name='subsample')
-    dim_subsample_freq = Integer(low=1, high=10, name='subsample_freq')
+    # dim_subsample_freq = Integer(low=1, high=10, name='subsample_freq')
     dim_colsample_bytree = Real(low=0.1, high=0.99, name='colsample_bytree')
     # dim_reg_alpha = Real(low=0, high=10, name='reg_alpha')
     # dim_reg_lambda = Real(low=0, high=10, name='reg_lambda')
@@ -168,7 +168,7 @@ def lgb_tuning(xtrain, base_params, n_searches=100):
                   # dim_min_child_weight,
                   # dim_min_child_samples,
                   # dim_subsample,
-                  dim_subsample_freq,
+                  # dim_subsample_freq,
                   dim_colsample_bytree,
                   # dim_reg_alpha,
                   # dim_reg_lambda
@@ -225,7 +225,7 @@ def lgb_tuning(xtrain, base_params, n_searches=100):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 5000000,
+    setup = {'nrows': 2000000,
              'tuning': True,
              'recompute_train': False,
              'add_test': False,

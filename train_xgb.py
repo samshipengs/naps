@@ -33,6 +33,14 @@ def compute_mrr(y_pred, y_true):
     return np.mean(1 / (pred_label + 1))
 
 
+def evalmetric(preds, dtrain):
+    labels = dtrain.get_label()
+    pred_label = np.where(np.argsort(preds)[:, ::-1] == labels.reshape(-1, 1))[1]
+    # return a pair metric_name, result. The metric name must not contain a colon (:) or a space
+    # since preds are margin(before logistic transformation, cutoff at 0)
+    return 'mrr', 1 - np.mean(1 / (pred_label + 1))
+
+
 def expand(df, col):
     """
     Expand a column of list to a list of columns and drop the original column
@@ -120,7 +128,9 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
             logger.info('Starts training')
             clf = xgb.train(params,
                             dtrain,
-                            num_boost_round=50,
+                            num_boost_round=100,
+                            early_stopping_rounds=10,
+                            feval=evalmetric,
                             evals=[(dtrain, 'train'), (dval, 'val')])
 
             if feature_importance:
@@ -170,12 +180,11 @@ if __name__ == '__main__':
     setup = {'nrows': 1000000,
              'recompute_train': False,
              'add_test': False,
-             'only_last': False,
+             'only_last': True,
              'retrain': True,
              'recompute_test': False}
 
-    params = {'num_round': 100,
-              'eta': 0.05,
+    params = {'eta': 0.05,
               'gamma': 0,
               'max_depth': 5,
               'subsample': 0.9,

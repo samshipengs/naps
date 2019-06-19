@@ -25,6 +25,20 @@ def build_model(dense_act='relu', kernel_initializer='glorot_uniform'):
     return model
 
 
+def build_ensemble(dense_act='relu'):
+    K.clear_session()
+    # build model =====================================================================================
+    # numerics
+    input_layer = Input(shape=(75, ))
+    dense = Dense(128, activation=dense_act)(input_layer)
+    dense = BatchNormalization()(dense)
+    # output_layer = Dense(25, activation='sigmoid')(dense)
+    output_layer = Dense(25, activation='softmax')(dense)
+
+    model = Model(inputs=input_layer, outputs=output_layer)
+    return model
+
+
 # def build_model(dense_act='relu', kernel_initializer='glorot_uniform'):
 #     K.clear_session()
 #     # build model =====================================================================================

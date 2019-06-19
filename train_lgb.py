@@ -247,7 +247,7 @@ if __name__ == '__main__':
              'add_test': False,
              'only_last': False,
              'retrain': True,
-             'recompute_test': False}
+             'recompute_test': True}
 
     base_params = {'boosting': 'gbdt',  # gbdt, dart, goss
                    'num_boost_round': 500,

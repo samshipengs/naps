@@ -60,9 +60,8 @@ def train(train_inputs, params, only_last=False, retrain=False):
         x_trn, x_val = (train_inputs[trn_mask].reset_index(drop=True),
                         train_inputs[~trn_mask].reset_index(drop=True))
 
-        if not only_last:
-            # for validation only last row is needed
-            x_val = x_val.groupby('session_id').last().reset_index(drop=False)
+        # for validation only last row is needed
+        x_val = x_val.groupby('session_id').last().reset_index(drop=False)
 
         # get target
         y_trn, y_val = x_trn['target'].values, x_val['target'].values

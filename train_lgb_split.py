@@ -65,6 +65,9 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
     # kf = KFold(n_splits=5, shuffle=True, random_state=RS)
     ss = ShuffleSplit(n_splits=n_fold, test_size=test_fraction, random_state=RS)
 
+    # add sizes info
+    train_inputs['length'] = train_inputs.groupby('session_id')['session_id'].transform('size')
+
     # record classifiers and mrr each training
     clfs = []
     mrrs = []
@@ -80,20 +83,44 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
         x_trn, x_val = (train_inputs[trn_mask].reset_index(drop=True),
                         train_inputs[~trn_mask].reset_index(drop=True))
 
+        # split the training into two models, first with only session_size=1 second with > 1
+        trn_ones_mask = x_trn['length'] == 1
+        val_ones_mask = x_val['length'] == 1
+
+        logger.info(f'Train has {trn_ones_mask.sum()} ones session and {(~trn_ones_mask).sum()} more')
+
+        x_trn_ones, x_trn_more = x_trn[trn_ones_mask], x_trn[~trn_ones_mask]
+        x_val_ones, x_val_more = x_val[val_ones_mask], x_val[~val_ones_mask]
+
         # for validation only last row is needed
-        x_val = x_val.groupby('session_id').last().reset_index(drop=False)
+        # x_val_ones = x_val_ones.groupby('session_id').last().reset_index(drop=False)  # this is not needed
+        x_val_more = x_val_more.groupby('session_id').last().reset_index(drop=False)
 
         # get target
-        y_trn, y_val = x_trn['target'].values, x_val['target'].values
-        x_trn.drop(['session_id', 'target'], axis=1, inplace=True)
-        x_val.drop(['session_id', 'target'], axis=1, inplace=True)
+        y_trn_ones, y_val_ones = x_trn_ones['target'].values, x_val_ones['target'].values
+        y_trn_more, y_val_more = x_trn_more['target'].values, x_val_more['target'].values
+
+        remove_ones_cols = [c for c in x_trn.columns if 'prev' in c]
+        remove_ones_cols += ['last_action_type', 'last_reference_relative_loc', 'last_duration', 'imp_changed',
+                             'inter', 'co', 'step', 'fs', 'cs']
+        remove_ones_cols += ['session_id', 'length', 'target']
+        x_trn_ones.drop(remove_ones_cols, axis=1, inplace=True)
+        x_val_ones.drop(remove_ones_cols, axis=1, inplace=True)
+
+        x_trn_more.drop(['session_id', 'length', 'target'], axis=1, inplace=True)
+        x_val_more.drop(['session_id', 'length', 'target'], axis=1, inplace=True)
 
         # get categorical index
-        cat_ind = [k for k, v in enumerate(x_trn.columns) if v in CATEGORICAL_COLUMNS]
+        cat_ind_ones = [k for k, v in enumerate(x_trn_ones.columns) if v in CATEGORICAL_COLUMNS]
+        cat_ind_more = [k for k, v in enumerate(x_trn_more.columns) if v in CATEGORICAL_COLUMNS]
+
         # =====================================================================================
 
-        lgb_trn_data = lgb.Dataset(x_trn, label=y_trn, free_raw_data=False)
-        lgb_val_data = lgb.Dataset(x_val, label=y_val, free_raw_data=False)
+        lgb_trn_data_ones = lgb.Dataset(x_trn_ones, label=y_trn_ones, free_raw_data=False)
+        lgb_val_data_ones = lgb.Dataset(x_val_ones, label=y_val_ones, free_raw_data=False)
+
+        lgb_trn_data_more = lgb.Dataset(x_trn_more, label=y_trn_more, free_raw_data=False)
+        lgb_val_data_more = lgb.Dataset(x_val_more, label=y_val_more, free_raw_data=False)
         # =====================================================================================
         # create model
         model_filename = os.path.join(model_path, f'lgb_cv{fold}.model')
@@ -103,46 +130,85 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
             clf = lgb.Booster(model_file=model_filename)
         else:
             # train model
-            clf = lgb.train(params,
-                            lgb_trn_data,
-                            valid_sets=[lgb_trn_data, lgb_val_data],
-                            valid_names=['train', 'val'],
-                            categorical_feature=cat_ind,
-                            feval=lgb_mrr,
-                            # init_model=lgb.Booster(model_file=model_filename),
-                            verbose_eval=100)
-            if feature_importance:
-                logger.info('Compute feature importance')
-                # grab feature importance
-                imp_df = pd.DataFrame()
-                imp_df['feature_importance'] = clf.feature_importance(importance_type='gain',
-                                                                      iteration=clf.best_iteration)
-                imp_df['features'] = x_trn.columns
-                plot_imp_lgb(imp_df, fold)
-                compute_shap_multi_class(clf, x_val, x_val.columns, f'lgb_shap_{fold}')
+            params_ones = {'boosting': 'gbdt',  # gbdt, dart, goss
+                           'num_boost_round': 500,
+                           'learning_rate': 0.02,
+                           'early_stopping_rounds': 50,
+                           'num_class': 25,
+                           'objective': 'multiclass',
+                           'metric': ['multi_logloss'],
+                           'verbose': -1,
+                           'seed': 42,
+                           'max_depth': 6,
+                           'num_leaves': 10,
+                           'feature_fraction': 1}
 
-            clf.save_model(model_filename)
+            clf_one = lgb.train(params_ones,
+                                lgb_trn_data_ones,
+                                valid_sets=[lgb_trn_data_ones, lgb_val_data_ones],
+                                valid_names=['train', 'val'],
+                                categorical_feature=cat_ind_ones,
+                                # feval=lgb_mrr,
+                                # init_model=lgb.Booster(model_file=model_filename),
+                                verbose_eval=100)
 
-        # make prediction
-        x_trn = train_inputs[trn_mask].reset_index(drop=True)
-        x_trn = x_trn.groupby('session_id').last().reset_index(drop=False)
-        y_trn = x_trn['target'].values
-        x_trn.drop(['session_id', 'target'], axis=1, inplace=True)
+            params_more = {'boosting': 'gbdt',  # gbdt, dart, goss
+                           'num_boost_round': 500,
+                           'learning_rate': 0.02,
+                           'early_stopping_rounds': 100,
+                           'num_class': 25,
+                           'objective': 'multiclass',
+                           'metric': ['multi_logloss'],
+                           'verbose': -1,
+                           'seed': 42,
+                           'max_depth': 5,
+                           'num_leaves': 10,
+                           'feature_fraction': 0.9,
+                           }
 
-        trn_pred = clf.predict(x_trn)
-        trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
-        # plot_hist(trn_pred_label, y_trn, 'train')
-        # confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
-        trn_mrr = np.mean(1 / (trn_pred_label + 1))
-        # save prediction
-        np.save(os.path.join(model_path, 'lgb_trn_0_pred.npy'), trn_pred)
+            clf_more = lgb.train(params_more,
+                                 lgb_trn_data_more,
+                                 valid_sets=[lgb_trn_data_more, lgb_val_data_more],
+                                 valid_names=['train', 'val'],
+                                 categorical_feature=cat_ind_more,
+                                 # feval=lgb_mrr,
+                                 # init_model=lgb.Booster(model_file=model_filename),
+                                 verbose_eval=100)
 
-        val_pred = clf.predict(x_val)
-        val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
+            # if feature_importance:
+            #     logger.info('Compute feature importance')
+            #     # grab feature importance
+            #     imp_df = pd.DataFrame()
+            #     imp_df['feature_importance'] = clf.feature_importance(importance_type='gain',
+            #                                                           iteration=clf.best_iteration)
+            #     imp_df['features'] = x_trn.columns
+            #     plot_imp_lgb(imp_df, fold)
+            #     compute_shap_multi_class(clf, x_val, x_val.columns, f'lgb_shap_{fold}')
+            #
+            # clf.save_model(model_filename)
+
+        # # make prediction
+        # x_trn = train_inputs[trn_mask].reset_index(drop=True)
+        # x_trn = x_trn.groupby('session_id').last().reset_index(drop=False)
+        # y_trn = x_trn['target'].values
+        # x_trn.drop(['session_id', 'target'], axis=1, inplace=True)
+        #
+        # trn_pred = clf.predict(x_trn)
+        # trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
+        # # plot_hist(trn_pred_label, y_trn, 'train')
+        # # confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
+        # trn_mrr = np.mean(1 / (trn_pred_label + 1))
+        # # save prediction
+        # np.save(os.path.join(model_path, 'lgb_trn_0_pred.npy'), trn_pred)
+
+        val_pred = np.concatenate((clf_one.predict(x_val_ones), clf_more.predict(x_val_more)), axis=0)
+        val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == np.concatenate((y_val_ones, y_val_more), axis=0).reshape(-1, 1))[1]
         # plot_hist(val_pred_label, y_val, 'validation')
         # confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
         val_mrr = np.mean(1 / (val_pred_label + 1))
-        logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')
+        # logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')
+        logger.info(f'val mrr: {val_mrr:.4f}')
+
         np.save(os.path.join(model_path, 'lgb_val_0_pred.npy'), val_pred)
 
         clfs.append(clf)
@@ -240,7 +306,7 @@ def lgb_tuning(xtrain, base_params, n_searches=200):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 5000000,
+    setup = {'nrows': 1000000,
              'tuning': False,
              'recompute_train': False,
              'add_test': False,

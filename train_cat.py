@@ -20,6 +20,8 @@ Filepath = get_data_path()
 # random splitting for cross-validation
 RS = 42
 
+# catboost GPU does not support custom metric
+
 
 def train(train_inputs, params, only_last=False, retrain=False):
     # path to where model is saved
@@ -106,9 +108,11 @@ def train(train_inputs, params, only_last=False, retrain=False):
 
         trn_pred = clf.predict_proba(x_trn)
         trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
-        plot_hist(trn_pred_label, y_trn, 'train')
-        confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
+        # plot_hist(trn_pred_label, y_trn, 'train')
+        # confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
         trn_mrr = np.mean(1 / (trn_pred_label + 1))
+        # save prediction
+        np.save(os.path.join(model_path, 'cat_trn_0_pred.npy'), trn_pred)
 
         val_pred = clf.predict_proba(x_val)
         val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
@@ -116,6 +120,8 @@ def train(train_inputs, params, only_last=False, retrain=False):
         confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
         val_mrr = np.mean(1 / (val_pred_label + 1))
         logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')
+        # save prediction
+        np.save(os.path.join(model_path, 'cat_val_0_pred.npy'), val_pred)
 
         clfs.append(clf)
         mrrs.append((trn_mrr, val_mrr))
@@ -136,18 +142,18 @@ if __name__ == '__main__':
     params = {'loss_function': 'MultiClass',
               'custom_metric': ['Accuracy'],
               'eval_metric': 'MultiClass',
-              'iterations': 10000,
-              'learning_rate': 0.02,
+              'iterations': 500,
+              'learning_rate': 0.03,
               'early_stopping_rounds': 100,
               # SymmetricTree, Depthwise, Lossguide (lossguide seems like not implemented)
               'grow_policy': 'SymmetricTree',
-              'depth': 6,
+              'depth': 8,
               'bootstrap_type': 'Bayesian',  # Poisson, Bayesian, Bernoulli
               # 'subsample': 0.8,
-              'bagging_temperature': 2,
-              'l2_leaf_reg': 5,
-              'random_strength': 3,
-              'border_count': 100,
+              # 'bagging_temperature': 1,
+              # 'l2_leaf_reg': 10,
+              # 'random_strength': 10,
+              # 'border_count': 100,
               'task_type': device}
 
     if params['grow_policy'] == 'Lossguide':
@@ -193,6 +199,8 @@ if __name__ == '__main__':
     for c, clf in enumerate(models):
         logger.info(f'Generating predictions from model {c}')
         test_pred = clf.predict_proba(test_inputs)
+        # save prediction
+        np.save(os.path.join(Filepath.sub_path, 'cat_test_0_pred.npy'), test_pred)
         test_predictions.append(test_pred)
 
     logger.info('Generating submission by averaging cv predictions')

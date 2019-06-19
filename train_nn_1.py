@@ -1,24 +1,19 @@
 import os
 import re
 import time
-import pprint
 import pandas as pd
 import numpy as np
 from datetime import datetime as dt
 from ast import literal_eval
 
-from sklearn.model_selection import KFold, ShuffleSplit
+from sklearn.model_selection import KFold
 from keras import backend as K
-from keras.utils import to_categorical
 from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
-from keras import optimizers
 from keras.utils import plot_model
 from keras.models import load_model
-import tensorflow as tf
-
 from model import build_model
 from clr_callback import CyclicLR
-from create_model_inputs import create_model_inputs, expand
+from create_model_inputs import create_model_inputs
 from utils import get_logger, get_data_path
 from plots import plot_hist, confusion_matrix
 
@@ -26,21 +21,6 @@ from plots import plot_hist, confusion_matrix
 logger = get_logger('train_model')
 Filepath = get_data_path()
 RS = 42
-
-
-# def custom_objective(y_true, y_pred):
-#     pred_value = K.max(y_pred*y_true, axis=1)
-#     diff = K.reshape(pred_value, (512, 1)) - y_pred
-#     incorrect_pred_mask = diff < 0
-#     # select the one that is incorrectly predicted
-#     incorrects = tf.boolean_mask(-diff, incorrect_pred_mask)
-#     return K.sum(K.flatten(incorrects))
-
-
-# def custom_objective(y_true, y_pred):
-#     pred_value = K.max(y_pred*y_true, axis=1)
-#     diff = K.max(y_pred, axis=1) - pred_value
-#     return K.sum(diff)
 
 
 class LoggingCallback(Callback):
@@ -85,7 +65,7 @@ class LRTensorBoard(TensorBoard):
 #
 #             yield ([numerics_batch, prices_batch, clicks_batch], targets_batch)
 
-def iterate_minibatches(input_x, targets, batch_size, shuffle=True):
+def iterate_minibatches(input_x, targets, embed_ind, num_ind, batch_size, shuffle=True):
     # default we will shuffle
     indices = np.arange(len(targets))
     while True:
@@ -99,42 +79,19 @@ def iterate_minibatches(input_x, targets, batch_size, shuffle=True):
             else:
                 excerpt = indices[start_idx:start_idx + batch_size]
 
-            input_batch = input_x[excerpt]
+            input_batch = input_x[:, num_ind][excerpt]
+            emb = [input_x[:, i][excerpt] for i in embed_ind]
             # prices_batch = prices[excerpt]
             # clicks_batch = clicks[excerpt]
             targets_batch = targets[excerpt]
-            # print('BATCH>>>', targets_batch.shape)
+
             # yield ([numerics_batch, prices_batch, clicks_batch], targets_batch)
-            yield (input_batch, targets_batch)
+            yield ([input_batch]+emb, targets_batch)
 
 
 def log_median(df, col):
     df[col] = np.log1p(df[col])
     df[col] = df[col]/np.median(df[col])
-
-
-def nn_prep(df):
-    # fill nans
-    df['last_reference_relative_loc'] = df['last_reference_relative_loc'].fillna(-1)
-    df['imp_changed'] = df['imp_changed'].fillna(-1)
-    rank_cols = [i for i in df.columns if 'rank' in i]
-    df[rank_cols] = df[rank_cols].fillna(-1)
-    df.fillna(0, inplace=True)
-
-    # some transformation
-    log_median(df, 'last_duration')
-    log_median(df, 'session_duration')
-    # ohe
-    # ohe_cols = ['last_action_type', 'fs', 'sort_order']
-    ohe_cols = ['last_action_type']
-
-    for col in ohe_cols:
-        logger.info(f'One hot: {col}')
-        df[col] = df[col].astype(int)
-        # df = pd.get_dummies(df, prefix=[col], drop_first=True)
-        n_unique = df[col].nunique()
-        df[col] = df[col].apply(lambda v: np.eye(n_unique, dtype=int)[v][1:])
-        expand(df, col)
 
 
 def train(train_inputs, params, only_last=False, retrain=False):
@@ -157,10 +114,23 @@ def train(train_inputs, params, only_last=False, retrain=False):
     # train and valid
     unique_session_ids = train_inputs['session_id'].unique()
 
-    kf = ShuffleSplit(n_splits=5, test_size=0.15, random_state=RS)
+    kf = KFold(n_splits=5, shuffle=True, random_state=RS)
 
-    # a bit preprocessing
-    nn_prep(train_inputs)
+    # fill nans
+    train_inputs['last_reference_relative_loc'] = train_inputs['last_reference_relative_loc'].fillna(-1)
+    train_inputs['imp_changed'] = train_inputs['imp_changed'].fillna(-1)
+    rank_cols = [i for i in train_inputs.columns if 'rank' in i]
+    train_inputs[rank_cols] = train_inputs[rank_cols].fillna(-1)
+    train_inputs.fillna(0, inplace=True)
+
+    # some transformation
+    log_median(train_inputs, 'last_duration')
+    log_median(train_inputs, 'session_duration')
+    # ohe
+    embed_cols = ['last_action_type', 'fs', 'sort_order']
+    for col in embed_cols:
+        train_inputs[col] = train_inputs[col].astype(int)
+        # train_inputs = pd.get_dummies(train_inputs, prefix=[col], drop_first=True)
 
     batch_size = params['batch_size']
     n_epochs = params['n_epochs']
@@ -185,12 +155,18 @@ def train(train_inputs, params, only_last=False, retrain=False):
         x_trn.drop(['session_id', 'target'], axis=1, inplace=True)
         x_val.drop(['session_id', 'target'], axis=1, inplace=True)
 
+        # get embedding cols index
+        embed_ind = [k for k, v in enumerate(x_trn.columns) if v in embed_cols]
+        num_ind = [k for k, v in enumerate(x_trn.columns) if v not in embed_cols]
+
+        # get each modal
+        # trn_num, val_num = x_trn[numeric_cols].values, x_val[numeric_cols].values
+        # trn_price, val_price = x_trn[price_cols].values, x_val[price_cols].values
+        # trn_click, val_click = x_trn[click_cols].values, x_val[click_cols].values
+
         # data generator
         # train_gen = iterate_minibatches(trn_num, trn_price, trn_click, y_trn, batch_size, shuffle=True)
-        y_trn_binary = to_categorical(y_trn)
-        y_val_binary = to_categorical(y_val)
-        train_gen = iterate_minibatches(x_trn.values, y_trn_binary, batch_size, shuffle=True)
-        val_gen = iterate_minibatches(x_val.values, y_val_binary, batch_size, shuffle=False)
+        train_gen = iterate_minibatches(x_trn.values, y_trn, embed_ind, num_ind, batch_size, shuffle=True)
 
         # =====================================================================================
         # create model
@@ -201,11 +177,6 @@ def train(train_inputs, params, only_last=False, retrain=False):
         else:
             model = build_model()
             nparams = model.count_params()
-            # opt = optimizers.Adam(lr=params['learning_rate'])
-            opt = optimizers.Adagrad(lr=params['learning_rate'])
-            # model.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=['accuracy'])
-            model.compile(optimizer=opt, loss="categorical_crossentropy", metrics=['accuracy'])
-            # model.compile(optimizer=opt, loss=custom_objective, metrics=['categorical_crossentropy'])
 
             logger.info((f'train len: {len(y_trn):,} | val len: {len(y_val):,} '
                          f'| number of parameters: {nparams:,} | train_len/nparams={len(y_trn) / nparams:.5f}'))
@@ -251,8 +222,8 @@ def train(train_inputs, params, only_last=False, retrain=False):
                                           verbose=1,
                                           callbacks=callbacks,
                                           # validation_data=([val_num, val_price, val_click], y_val),
-                                          # validation_data=(x_val.values, y_val),
-                                          validation_data=val_gen,
+                                          validation_data=([x_val.values[:, num_ind]] + [x_val.values[:, i] for i in embed_ind],
+                                                           y_val),
                                           validation_steps=len(y_val) // batch_size)
 
         # make prediction
@@ -263,18 +234,16 @@ def train(train_inputs, params, only_last=False, retrain=False):
 
         trn_pred = model.predict(x=x_trn.values, batch_size=1024)
         trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
-        # plot_hist(trn_pred_label, y_trn, 'train')
-        # confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
+        plot_hist(trn_pred_label, y_trn, 'train')
+        confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
         trn_mrr = np.mean(1 / (trn_pred_label + 1))
-        np.save(os.path.join(Filepath.sub_path, 'nn_trn_0_pred.npy'), trn_pred)
 
         val_pred = model.predict(x=x_val.values, batch_size=1024)
         val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
-        # plot_hist(val_pred_label, y_val, 'validation')
-        # confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
+        plot_hist(val_pred_label, y_val, 'validation')
+        confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
         val_mrr = np.mean(1 / (val_pred_label + 1))
         logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')
-        np.save(os.path.join(Filepath.sub_path, 'nn_val_0_pred.npy'), val_pred)
 
         clfs.append(model)
         mrrs.append((trn_mrr, val_mrr))
@@ -287,24 +256,24 @@ if __name__ == '__main__':
     setup = {'nrows': 5000000,
              'recompute_train': False,
              'add_test': False,
-             'only_last': False,
+             'only_last': True,
              'retrain': True,
              'recompute_test': False}
 
     params = {'batch_size': 512,
               'n_epochs': 100,
-              'early_stopping_patience': 100,
+              'early_stopping_patience': 50,
               'reduce_on_plateau_patience': 30,
-              'learning_rate': 0.01,
+              'learning_rate': 0.001,
               'max_lr': 0.005,
               'min_lr': 0.0001,
-              'use_cyc': False,
+              'use_cyc': True,
               'early_stop': False,
               'reduce_on_plateau': False
               }
 
-    logger.info(f"\nSetup\n{'='*20}\n{pprint.pformat(setup)}\n{'='*20}")
-    logger.info(f"\nParams\n{'='*20}\n{pprint.pformat(params)}\n{'='*20}")
+    logger.info(f"\nSetup\n{'='*20}\n{setup}\n{'='*20}")
+    logger.info(f"\nParams\n{'='*20}\n{params}\n{'='*20}")
 
     # first create training inputs
     train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], recompute=setup['recompute_train'])
@@ -313,10 +282,11 @@ if __name__ == '__main__':
     train_mrr = np.mean([mrr[0] for mrr in mrrs])
     val_mrr = np.mean([mrr[1] for mrr in mrrs])
     # get the test inputs
-    test_inputs = create_model_inputs(mode='test', recompute=setup['recompute_test'])
-    # a bit preprocessing
-    nn_prep(test_inputs)
-
+    test_inputs = create_model_inputs(mode='test', nrows=setup['test_rows'], recompute=setup['recompute_test'])
+    # test_inputs = test_inputs.sort_values(by=['cust'])
+    test_ids = np.load(os.path.join(Filepath.gbm_cache_path, 'test_ids.npy'))
+    test_inputs['session_id'] = test_ids
+    test_inputs = test_inputs.groupby('session_id').last().reset_index(drop=True)
     # make predictions on test
     logger.info('Load test sub csv')
     test_sub = pd.read_csv(os.path.join(Filepath.sub_path, 'test_sub.csv'))
@@ -332,9 +302,9 @@ if __name__ == '__main__':
 
     test_predictions = []
     for c, clf in enumerate(models):
+        # test_sub_m = test_sub.copy()
         logger.info(f'Generating predictions from model {c}')
         test_pred = clf.predict_proba(test_inputs)
-        np.save(os.path.join(Filepath.sub_path, 'nn_test_0_pred.npy'), test_pred)
         test_predictions.append(test_pred)
 
     logger.info('Generating submission by averaging cv predictions')
@@ -342,7 +312,12 @@ if __name__ == '__main__':
     test_pred_label = np.argsort(test_predictions)[:, ::-1]
     np.save(os.path.join(Filepath.sub_path, f'test_pred_label.npy'), test_pred_label)
 
+    # pad to 25
+    # test_sub['impressions'] = test_sub['impressions'].str.split('|')
+    # print(test_sub['impressions'].str.len().describe())
+    # test_sub['impressions'] = test_sub['impressions'].apply(lambda x: np.pad(x, (0, 25-len(x)), mode='constant'))
     test_impressions = np.array(list(test_sub['impressions'].values))
+
     test_impressions_pred = test_impressions[np.arange(len(test_impressions))[:, None], test_pred_label]
     test_sub.loc[:, 'recommendations'] = [create_recs(i) for i in test_impressions_pred]
     del test_sub['impressions']
@@ -354,8 +329,6 @@ if __name__ == '__main__':
     test_sub.rename(columns={'recommendations': 'item_recommendations'}, inplace=True)
     test_sub = test_sub[sub_columns]
     current_time = dt.now().strftime('%m-%d-%H-%M')
-    test_sub.to_csv(os.path.join(Filepath.sub_path, f'nn_sub_{current_time}_{train_mrr:.4f}_{val_mrr:.4f}.csv'),
-                    index=False)
+    test_sub.to_csv(os.path.join(Filepath.sub_path, f'cat_sub_{current_time}.csv'), index=False)
     logger.info('Done all')
-
 

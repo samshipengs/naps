@@ -33,6 +33,14 @@ def compute_mrr(y_pred, y_true):
     return np.mean(1 / (pred_label + 1))
 
 
+# self-defined eval metric
+# f(preds: array, train_data: Dataset) -> name: string, eval_result: float, is_higher_better: bool
+def lgb_mrr(y_preds, train_data):
+    y_true = train_data.get_label()
+    pred_label = np.where((np.argsort(y_preds.reshape(25, -1), axis=0)[::-1, :] == y_true).T)[1]
+    return 'mrr', np.mean(1 / (pred_label + 1)), True
+
+
 def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, feature_importance=True,
           retrain=False, verbose=True):
     # path to where model is saved
@@ -101,6 +109,7 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
                             valid_sets=[lgb_trn_data, lgb_val_data],
                             valid_names=['train', 'val'],
                             categorical_feature=cat_ind,
+                            feval=lgb_mrr,
                             # init_model=lgb.Booster(model_file=model_filename),
                             verbose_eval=100)
             if feature_importance:
@@ -123,16 +132,19 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
 
         trn_pred = clf.predict(x_trn)
         trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
-        plot_hist(trn_pred_label, y_trn, 'train')
-        confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
+        # plot_hist(trn_pred_label, y_trn, 'train')
+        # confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
         trn_mrr = np.mean(1 / (trn_pred_label + 1))
+        # save prediction
+        np.save(os.path.join(model_path, 'lgb_trn_0_pred.npy'), trn_pred)
 
         val_pred = clf.predict(x_val)
         val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
-        plot_hist(val_pred_label, y_val, 'validation')
-        confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
+        # plot_hist(val_pred_label, y_val, 'validation')
+        # confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
         val_mrr = np.mean(1 / (val_pred_label + 1))
         logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')
+        np.save(os.path.join(model_path, 'lgb_val_0_pred.npy'), val_pred)
 
         clfs.append(clf)
         mrrs.append((trn_mrr, val_mrr))
@@ -229,8 +241,8 @@ def lgb_tuning(xtrain, base_params, n_searches=200):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 2000000,
-             'tuning': True,
+    setup = {'nrows': 5000000,
+             'tuning': False,
              'recompute_train': False,
              'add_test': False,
              'only_last': False,
@@ -238,9 +250,9 @@ if __name__ == '__main__':
              'recompute_test': False}
 
     base_params = {'boosting': 'gbdt',  # gbdt, dart, goss
-                   'num_boost_round': 2000,
-                   'learning_rate': 0.02,
-                   'early_stopping_rounds': 50,
+                   'num_boost_round': 500,
+                   'learning_rate': 0.03,
+                   'early_stopping_rounds': 100,
                    'num_class': 25,
                    'objective': 'multiclass',
                    'metric': ['multi_logloss'],
@@ -250,8 +262,6 @@ if __name__ == '__main__':
 
     params = {'max_depth': 5,
               'num_leaves': 10,
-              'bagging_freq': 1,
-              'bagging_fraction': 0.95,
               'feature_fraction': 0.9,
               }
 
@@ -305,6 +315,7 @@ if __name__ == '__main__':
         for c, clf in enumerate(models):
             logger.info(f'Generating predictions from model {c}')
             test_pred = clf.predict(test_inputs)
+            np.save(os.path.join(Filepath.sub_path, 'lgb_test_0_pred.npy'), test_pred)
             test_predictions.append(test_pred)
 
         logger.info('Generating submission by averaging cv predictions')

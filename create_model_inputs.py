@@ -479,11 +479,12 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         logger.info('Done meta mapping')
         logger.info('Add mean and median of both ratings and stars')
 
-        def _add_mean_median(values):
-            return pd.Series([np.nanmean(values), np.nanmedian(values)])
+        def _add_mean_median_std(values):
+            return pd.Series([np.nanmean(values), np.nanmedian(values), np.nanstd(values)])
 
-        df[['mean_rating', 'median_rating']] = df.apply(lambda row: _add_mean_median(row['ratings']), axis=1)
-        df[['mean_star', 'median_star']] = df.apply(lambda row: _add_mean_median(row['stars']), axis=1)
+        df[['mean_rating', 'median_rating', 'std_rating']] = df.apply(lambda row: _add_mean_median_std(row['ratings']),
+                                                                      axis=1)
+        df[['mean_star', 'median_star', 'std_star']] = df.apply(lambda row: _add_mean_median_std(row['stars']), axis=1)
 
         logger.info('Transform ratings and stars to relative rank')
 
@@ -571,7 +572,7 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
 
         # def _add_mean_median(prices):
         #     return pd.Series([np.mean(prices), np.median(prices)])
-        df[['mean_price', 'median_price']] = df.apply(lambda row: _add_mean_median(row['prices']), axis=1)
+        df[['mean_price', 'median_price', 'std_price']] = df.apply(lambda row: _add_mean_median_std(row['prices']), axis=1)
 
         logger.info('Add price rank')
         # add price rank

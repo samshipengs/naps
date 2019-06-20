@@ -21,12 +21,14 @@ Filepath = get_data_path()
 RS = 42
 
 # catboost GPU does not support custom metric
+
 def cat_preprocess(df):
     log_transform_cols = ['last_duration', 'session_duration', 'step']
     logger.info(f'Log1p transforming {log_transform_cols}')
     for c in log_transform_cols:
         df[c] = np.log1p(df[c])
-    
+
+
 def train(train_inputs, params, only_last=False, retrain=False):
     # path to where model is saved
     model_path = Filepath.model_path
@@ -34,7 +36,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
     # specify some columns that we do not want in training
     cf_cols = [i for i in train_inputs.columns if 'current_filters' in i]
     price_cols = [i for i in train_inputs.columns if re.match(r'prices_\d', i)]
-    drop_cols = cf_cols + price_cols  # + ['country', 'platform']
+    drop_cols = cf_cols + price_cols + ['country', 'platform']
     # drop cf col for now
     train_inputs.drop(drop_cols, axis=1, inplace=True)
     logger.info(f'train columns:\n{list(train_inputs.columns)}')

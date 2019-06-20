@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import gc
 import pprint
 import pandas as pd
 import numpy as np
@@ -21,12 +22,14 @@ Filepath = get_data_path()
 RS = 42
 
 # catboost GPU does not support custom metric
-def cat_preprocess(df):
-    log_transform_cols = ['last_duration', 'session_duration', 'step']
-    logger.info(f'Log1p transforming {log_transform_cols}')
-    for c in log_transform_cols:
-        df[c] = np.log1p(df[c])
-    
+
+
+def compute_mrr(pred, y_true):
+    pred_label = np.where(np.argsort(pred)[:, ::-1] == y_true.reshape(-1, 1))[1]
+    mrr = np.mean(1 / (pred_label + 1))
+    return mrr
+
+
 def train(train_inputs, params, only_last=False, retrain=False):
     # path to where model is saved
     model_path = Filepath.model_path
@@ -37,15 +40,24 @@ def train(train_inputs, params, only_last=False, retrain=False):
     drop_cols = cf_cols + price_cols  # + ['country', 'platform']
     # drop cf col for now
     train_inputs.drop(drop_cols, axis=1, inplace=True)
-    logger.info(f'train columns:\n{list(train_inputs.columns)}')
+    # logger.info(f'train columns:\n{list(train_inputs.columns)}')
+
+    # add sizes info
+    # train_inputs['length'] = train_inputs.groupby('session_id')['session_id'].transform('size')
+
+    # temp
+    train_clean = pd.read_parquet('./gbm_cache/basic_preprocessed_train_5000000.snappy')
+    length = train_clean.groupby('session_id')['session_id'].size()
+    train_inputs['length'] = train_inputs['session_id'].map(length)
+    del train_clean
+    gc.collect()
+    assert train_inputs.length.isna().sum() == 0
+
     # if only use the last row of train_inputs to train
     if only_last:
         logger.info('Training ONLY with last row')
         train_inputs = train_inputs.groupby('session_id').last().reset_index(drop=False)
 
-    # a bit processing
-    cat_preprocess(train_inputs)
-    
     # grab unique session ids and use this to split, so that train_inputs with same session_id do not spread to both
     # train and valid
     unique_session_ids = train_inputs['session_id'].unique()
@@ -67,67 +79,123 @@ def train(train_inputs, params, only_last=False, retrain=False):
         x_trn, x_val = (train_inputs[trn_mask].reset_index(drop=True),
                         train_inputs[~trn_mask].reset_index(drop=True))
 
+        # split the training into two models, first with only session_size=1 second with > 1
+        trn_ones_mask = x_trn['length'] == 1
+        val_ones_mask = x_val['length'] == 1
+        n_ones_trn, n_ones_val = trn_ones_mask.sum(), val_ones_mask.sum()
+        n_more_trn, n_more_val = (~trn_ones_mask).sum(), (~val_ones_mask).sum()
+        logger.info(f'Train has {n_ones_trn:,} ones session and {n_more_trn:,} more | '
+                    f'Val has {n_ones_val:,} ones session and {n_more_val:,} more')
+
+        # train
+        x_trn_ones, x_trn_more = (x_trn[trn_ones_mask].reset_index(drop=True),
+                                  x_trn[~trn_ones_mask].reset_index(drop=True))
+        # val
+        x_val_ones, x_val_more = (x_val[val_ones_mask].reset_index(drop=True),
+                                  x_val[~val_ones_mask].reset_index(drop=True))
+
         # for validation only last row is needed
-        x_val = x_val.groupby('session_id').last().reset_index(drop=False)
+        x_val_more = x_val_more.groupby('session_id').last().reset_index(drop=False)
 
         # get target
-        y_trn, y_val = x_trn['target'].values, x_val['target'].values
-        x_trn.drop(['session_id', 'target'], axis=1, inplace=True)
-        x_val.drop(['session_id', 'target'], axis=1, inplace=True)
+        y_trn_ones, y_val_ones = x_trn_ones['target'].values, x_val_ones['target'].values
+        y_trn_more, y_val_more = x_trn_more['target'].values, x_val_more['target'].values
+
+        remove_ones_cols = [c for c in x_trn.columns if 'prev' in c]
+        remove_ones_cols += ['last_action_type', 'last_reference_relative_loc', 'last_duration', 'imp_changed',
+                             'fs', 'sort_order']
+        remove_ones_cols += ['session_id', 'length', 'target']
+        x_trn_ones.drop(remove_ones_cols, axis=1, inplace=True)
+        x_val_ones.drop(remove_ones_cols, axis=1, inplace=True)
+
+        x_trn_more.drop(['session_id', 'length', 'target'], axis=1, inplace=True)
+        x_val_more.drop(['session_id', 'length', 'target'], axis=1, inplace=True)
 
         # get categorical index
-        cat_ind = [k for k, v in enumerate(x_trn.columns) if v in CATEGORICAL_COLUMNS]
+        cat_ind_ones = [k for k, v in enumerate(x_trn_ones.columns) if v in CATEGORICAL_COLUMNS]
+        cat_ind_more = [k for k, v in enumerate(x_trn_more.columns) if v in CATEGORICAL_COLUMNS]
+
         # =====================================================================================
-        # create model
-        model_filename = os.path.join(model_path, f'cat_cv{fold}.model')
-        if os.path.isfile(model_filename) and not retrain:
-            logger.info(f"Loading model from existing '{model_filename}'")
-            # parameters not required.
-            clf = cat.CatBoostClassifier()
-            clf.load_model(model_filename)
-        else:
-            # train model
-            clf = cat.CatBoostClassifier(**params)
-            clf.fit(x_trn, y_trn,
-                    cat_features=cat_ind,
-                    eval_set=(x_val, y_val),
+        # train model
+        device = 'GPU' if check_gpu() else 'CPU'
+        params_ones = {'loss_function': 'MultiClass',
+                       'custom_metric': ['Accuracy'],
+                       'eval_metric': 'MultiClass',
+                       'iterations': 3000,
+                       'learning_rate': 0.02,
+                       'early_stopping_rounds': 100,
+                       # SymmetricTree, Depthwise, Lossguide (lossguide seems like not implemented)
+                       'grow_policy': 'SymmetricTree',
+                       'depth': 5,
+                       'bootstrap_type': 'Bayesian',  # Poisson, Bayesian, Bernoulli
+                       # 'subsample': 0.8,
+                       # 'bagging_temperature': 1,
+                       'l2_leaf_reg': 10,
+                       'random_strength': 10,
+                       # 'border_count': 100,
+                       'task_type': device}
+
+        clf_one = cat.CatBoostClassifier(**params_ones)
+        clf_one.fit(x_trn_ones, y_trn_ones,
+                    cat_features=cat_ind_ones,
+                    eval_set=(x_val_ones, y_val_ones),
                     verbose=100,
                     plot=False)
 
-            # The Depthwise and Lossguide growing policies are not supported for feature importance
-            ftype = 'ShapValues'   # FeatureImportance, ShapValues, Interaction
-            logger.info(f'Getting feature importance with {ftype}')
-            if ftype == 'ShapValues':
-                imp_data = cat.Pool(x_val, label=y_val, cat_features=cat_ind)
-                # imp = clf.get_feature_importance(data=imp_data, prettified=True, type=ftype)
-                compute_shap_multi_class(clf, imp_data, x_val.columns, f'cat_{fold}')
-            else:
-                imp = clf.get_feature_importance(prettified=True, type=ftype)
-                plot_imp_cat(imp, f'{ftype}_{fold}')
-            clf.save_model(model_filename)
+        params_more = {'loss_function': 'MultiClass',
+                       'custom_metric': ['Accuracy'],
+                       'eval_metric': 'MultiClass',
+                       'iterations': 10000,
+                       'learning_rate': 0.02,
+                       'early_stopping_rounds': 100,
+                       # SymmetricTree, Depthwise, Lossguide (lossguide seems like not implemented)
+                       'grow_policy': 'SymmetricTree',
+                       'depth': 8,
+                       'bootstrap_type': 'Bayesian',  # Poisson, Bayesian, Bernoulli
+                       # 'subsample': 0.8,
+                       # 'bagging_temperature': 1,
+                       'l2_leaf_reg': 5,
+                       'random_strength': 5,
+                       # 'border_count': 100,
+                       'task_type': device}
+
+        clf_more = cat.CatBoostClassifier(**params_more)
+        clf_more.fit(x_trn_more, y_trn_more,
+                     cat_features=cat_ind_more,
+                     eval_set=(x_val_more, y_val_more),
+                     verbose=100,
+                     plot=False)
 
         # make prediction
         x_trn = train_inputs[trn_mask].reset_index(drop=True)
         x_trn = x_trn.groupby('session_id').last().reset_index(drop=False)
-        y_trn = x_trn['target'].values
-        x_trn.drop(['session_id', 'target'], axis=1, inplace=True)
+        # train
+        trn_ones_mask = x_trn['length'] == 1
+        x_trn_ones, x_trn_more = (x_trn[trn_ones_mask].reset_index(drop=True),
+                                  x_trn[~trn_ones_mask].reset_index(drop=True))
 
-        trn_pred = clf.predict_proba(x_trn)
-        trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
-        # plot_hist(trn_pred_label, y_trn, 'train')
-        # confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
-        trn_mrr = np.mean(1 / (trn_pred_label + 1))
-        # save prediction
-        np.save(os.path.join(model_path, 'cat_trn_0_pred.npy'), trn_pred)
+        y_trn_ones, y_trn_more = x_trn_ones['target'].values, x_trn_more['target'].values
+        x_trn_ones.drop(remove_ones_cols, axis=1, inplace=True)
+        x_trn_more.drop(['session_id', 'length', 'target'], axis=1, inplace=True)
 
-        val_pred = clf.predict_proba(x_val)
-        val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
-        plot_hist(val_pred_label, y_val, 'validation')
-        confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
-        val_mrr = np.mean(1 / (val_pred_label + 1))
-        logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')
-        # save prediction
-        np.save(os.path.join(model_path, 'cat_val_0_pred.npy'), val_pred)
+        trn_pred_ones, trn_pred_more = clf_one.predict_proba(x_trn_ones), clf_more.predict_proba(x_trn_more)
+        trn_pred = np.concatenate((trn_pred_ones, trn_pred_more), axis=0)
+        y_trn = np.concatenate((y_trn_ones, y_trn_more), axis=0)
+        trn_mrr = compute_mrr(trn_pred, y_trn)
+        trn_mrr_ones = compute_mrr(trn_pred_ones, y_trn_ones)
+        trn_mrr_more = compute_mrr(trn_pred_more, y_trn_more)
+
+        val_pred_ones, val_pred_more = clf_one.predict_proba(x_val_ones), clf_more.predict_proba(x_val_more)
+        val_pred = np.concatenate((val_pred_ones, val_pred_more), axis=0)
+        y_val = np.concatenate((y_val_ones, y_val_more), axis=0)
+        val_mrr = compute_mrr(val_pred, y_val)
+        val_mrr_ones = compute_mrr(val_pred_ones, y_val_ones)
+        val_mrr_more = compute_mrr(val_pred_more, y_val_more)
+        logger.info(f'\ntrain mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}\n'
+                    f'train mrr ones: {trn_mrr_ones:.4f} | val mrr ones: {val_mrr_ones:.4f}\n'
+                    f'train mrr more: {trn_mrr_more:.4f} | val mrr more: {val_mrr_more:.4f}\n')
+
+        np.save(os.path.join(model_path, 'lgb_val_0_pred.npy'), val_pred)
 
         clfs.append(clf)
         mrrs.append((trn_mrr, val_mrr))
@@ -148,12 +216,12 @@ if __name__ == '__main__':
     params = {'loss_function': 'MultiClass',
               'custom_metric': ['Accuracy'],
               'eval_metric': 'MultiClass',
-              'iterations': 5000,
+              'iterations': 500,
               'learning_rate': 0.03,
               'early_stopping_rounds': 100,
               # SymmetricTree, Depthwise, Lossguide (lossguide seems like not implemented)
               'grow_policy': 'SymmetricTree',
-              'depth': 6,
+              'depth': 8,
               'bootstrap_type': 'Bayesian',  # Poisson, Bayesian, Bernoulli
               # 'subsample': 0.8,
               # 'bagging_temperature': 1,

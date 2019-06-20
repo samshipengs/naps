@@ -98,9 +98,8 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
         x_trn, x_val = (train_inputs[trn_mask].reset_index(drop=True),
                         train_inputs[~trn_mask].reset_index(drop=True))
 
-        if not only_last:
-            # for validation only last row is needed
-            x_val = x_val.groupby('session_id').last().reset_index(drop=False)
+        # for validation only last row is needed
+        x_val = x_val.groupby('session_id').last().reset_index(drop=False)
 
         # get target
         y_trn, y_val = x_trn['target'].values, x_val['target'].values
@@ -110,9 +109,6 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
         # get categorical index
         # cat_ind = [k for k, v in enumerate(x_trn.columns) if v in CATEGORICAL_COLUMNS]
         # =====================================================================================
-
-        # lgb_trn_data = lgb.Dataset(x_trn, label=y_trn, free_raw_data=False)
-        # lgb_val_data = lgb.Dataset(x_val, label=y_val, free_raw_data=False)
         dtrain = xgb.DMatrix(x_trn, label=y_trn)
         dval = xgb.DMatrix(x_val, label=y_val)
 
@@ -177,10 +173,10 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 1000000,
+    setup = {'nrows': 5000000,
              'recompute_train': False,
              'add_test': False,
-             'only_last': True,
+             'only_last': False,
              'retrain': True,
              'recompute_test': False}
 

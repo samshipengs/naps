@@ -89,8 +89,8 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
 
         logger.info(f'Train has {trn_ones_mask.sum()} ones session and {(~trn_ones_mask).sum()} more')
 
-        x_trn_ones, x_trn_more = x_trn[trn_ones_mask], x_trn[~trn_ones_mask]
-        x_val_ones, x_val_more = x_val[val_ones_mask], x_val[~val_ones_mask]
+        x_trn_ones, x_trn_more = x_trn[trn_ones_mask].reset_index(drop=True), x_trn[~trn_ones_mask].reset_index(drop=True)
+        x_val_ones, x_val_more = x_val[val_ones_mask].reset_index(drop=True), x_val[~val_ones_mask].reset_index(drop=True),
 
         # for validation only last row is needed
         # x_val_ones = x_val_ones.groupby('session_id').last().reset_index(drop=False)  # this is not needed
@@ -102,7 +102,7 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
 
         remove_ones_cols = [c for c in x_trn.columns if 'prev' in c]
         remove_ones_cols += ['last_action_type', 'last_reference_relative_loc', 'last_duration', 'imp_changed',
-                             'inter', 'co', 'step', 'fs', 'cs']
+                             'fs', 'sort_order']
         remove_ones_cols += ['session_id', 'length', 'target']
         x_trn_ones.drop(remove_ones_cols, axis=1, inplace=True)
         x_val_ones.drop(remove_ones_cols, axis=1, inplace=True)
@@ -306,7 +306,7 @@ def lgb_tuning(xtrain, base_params, n_searches=200):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 1000000,
+    setup = {'nrows': 5000000,
              'tuning': False,
              'recompute_train': False,
              'add_test': False,
@@ -315,7 +315,7 @@ if __name__ == '__main__':
              'recompute_test': True}
 
     base_params = {'boosting': 'gbdt',  # gbdt, dart, goss
-                   'num_boost_round': 500,
+                   'num_boost_round': 3000,
                    'learning_rate': 0.03,
                    'early_stopping_rounds': 100,
                    'num_class': 25,

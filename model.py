@@ -7,11 +7,11 @@ from utils import get_logger
 logger = get_logger('model')
 
 
-def build_model(dense_act='relu', kernel_initializer='glorot_uniform'):
+def build_model(input_dim, dense_act='relu', kernel_initializer='glorot_uniform'):
     K.clear_session()
     # build model =====================================================================================
     # numerics
-    input_layer = Input(shape=(163, ), name='x_input')
+    input_layer = Input(shape=(input_dim, ), name='x_input')
     dense = Dense(128, activation=dense_act, kernel_initializer=kernel_initializer)(input_layer)
     dense = BatchNormalization()(dense)
     dense = Dense(64, activation=dense_act, kernel_initializer=kernel_initializer)(dense)

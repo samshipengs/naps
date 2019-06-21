@@ -167,18 +167,34 @@ n_unique_cs = len(change_sort_order_mapping())
 _, n_unique_fs = filter_selection_mapping(select_n_filters=32)
 
 
+# def find_relative_ref_loc(row):
+#     last_ref = row['last_reference']
+#     if pd.isna(last_ref) or type(row['impressions']) != list:
+#         # first row
+#         return np.nan
+#     else:
+#         # try:
+#         imps = list(row['impressions'])
+#         if last_ref in imps:
+#             return (imps.index(last_ref)+1)/25
+#         else:
+#             return np.nan
+
+
 def find_relative_ref_loc(row):
-    last_ref = row['last_reference']
+    last_action_type, last_ref = row['last_action_type'], row['last_reference']
     if pd.isna(last_ref) or type(row['impressions']) != list:
         # first row
-        return np.nan
+        return [np.nan, np.nan]
     else:
-        # try:
         imps = list(row['impressions'])
         if last_ref in imps:
-            return (imps.index(last_ref)+1)/25
+            if last_action_type == 0:
+                return [(imps.index(last_ref)+1)/25, np.nan]
+            else:
+                return [np.nan, (imps.index(last_ref)+1)/25]
         else:
-            return np.nan
+            return [np.nan, np.nan]
 
 
 def compute_session_func(grp):
@@ -241,7 +257,7 @@ def compute_session_func(grp):
 
     # add impression relative location
     df['last_reference'] = df['reference'].shift(1)
-    df.loc[click_out_mask, 'last_reference_relative_loc'] = df.apply(find_relative_ref_loc, axis=1)
+    df.loc[click_out_mask, 'last_reference_relative_loc'] = df.loc[click_out_mask].apply(find_relative_ref_loc, axis=1)
     df.drop('last_reference', axis=1, inplace=True)
 
     # only need click-out rows now
@@ -410,7 +426,7 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         df.loc[sort_mask, 'sort_order'] = df.loc[sort_mask, 'reference'].map(change_sort_order_mapper)
 
         # add impression change indicator
-        # df = different_impressions(df)
+        df = different_impressions(df)
 
         # process impressions
         df['impressions'] = df['impressions'].str.split('|')
@@ -606,7 +622,7 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
             except:
                 print(prices, n_bins, prices_len)
             return a
-
+        logger.info('Getting price bins')
         df['price_bin'] = df['prices'].apply(get_bins)
 
         logger.info('Pad 0s for prices length shorter than 25 in prices and price_bin')
@@ -650,7 +666,7 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         # expand_cols = ['prices', 'prices_rank', 'prev_click', 'prev_interact', 'current_filters',
         #                'half_prices_rank', 'ratings', 'stars']
         expand_cols = ['prices', 'price_bin', 'prev_click', 'prev_interact', 'current_filters',
-                       'ratings', 'stars']
+                       'ratings', 'stars', 'last_reference_relative_loc']
         for col in expand_cols:
             logger.info(f'Expanding on {col}')
             df = expand(df, col)

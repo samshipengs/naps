@@ -43,9 +43,9 @@ def lgb_mrr(y_preds, train_data):
 
 def lgb_preprocess(df):
     log_transform_cols = ['last_duration', 'session_duration', 'step', 'mean_price', 'median_price']
-    logger.info(f'Log1p transforming {log_transform_cols}')
-    for c in log_transform_cols:
-        df[c] = np.log1p(df[c])
+    for col in log_transform_cols:
+        logger.info(f'Log1p transforming {col}')
+        df[col] = np.log1p(df[col])
 
 
 def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, feature_importance=True,
@@ -59,7 +59,7 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
     drop_cols = cf_cols + price_cols  # + ['country', 'platform']
     # drop cf col for now
     train_inputs.drop(drop_cols, axis=1, inplace=True)
-    logger.debug(f'train columns: {train_inputs.columns}')
+
     # if only use the last row of train_inputs to train
     if only_last:
         logger.info('Training ONLY with last row')
@@ -112,7 +112,7 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
         # =====================================================================================
         # create model
         last = 'only_last' if only_last else 'all_rows'
-        model_filename = os.path.join(model_path, f'lgb_cv_{last}_{fold}.model')
+        model_filename = os.path.join(model_path, f'lgb_{last}_{fold}.model')
         if os.path.isfile(model_filename) and not retrain:
             logger.info(f"Loading model from existing '{model_filename}'")
             # parameters not required.
@@ -135,7 +135,7 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
                                                                       iteration=clf.best_iteration)
                 imp_df['features'] = x_trn.columns
                 plot_imp_lgb(imp_df, f'lgb_{last}_{fold}')
-                compute_shap_multi_class(clf, x_val, x_val.columns, f'lgb_shap_{fold}')
+                compute_shap_multi_class(clf, x_val, x_val.columns, f'lgb_shap_{last}_{fold}')
 
             clf.save_model(model_filename)
 
@@ -260,7 +260,7 @@ if __name__ == '__main__':
              'tuning': False,
              'recompute_train': False,
              'add_test': False,
-             'only_last': True,
+             'only_last': False,
              'retrain': True,
              'recompute_test': True}
 

@@ -40,7 +40,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
     drop_cols = cf_cols + price_cols + ['country', 'platform']
     # drop cf col for now
     train_inputs.drop(drop_cols, axis=1, inplace=True)
-    logger.info(f'train columns:\n{list(train_inputs.columns)}')
+
     # if only use the last row of train_inputs to train
     if only_last:
         logger.info('Training ONLY with last row')
@@ -48,7 +48,12 @@ def train(train_inputs, params, only_last=False, retrain=False):
 
     # a bit processing
     cat_preprocess(train_inputs)
-    
+
+    train_cols = train_inputs.columns
+    logger.info(f'Columns used for training: {train_cols.values}')
+    used_categorical_cols = train_cols[train_cols.isin(CATEGORICAL_COLUMNS)]
+    logger.info(f'Categorical columns in training: {used_categorical_cols.values}')
+
     # grab unique session ids and use this to split, so that train_inputs with same session_id do not spread to both
     # train and valid
     unique_session_ids = train_inputs['session_id'].unique()

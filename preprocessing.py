@@ -12,7 +12,7 @@ Filepath = get_data_path()
 # USE_COLS = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters', 'reference', 'impressions', 'prices',
 #             'country', 'device', 'platform']
 USE_COLS = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters',
-            'reference', 'impressions', 'prices', 'device', 'country', 'device', 'platform']
+            'reference', 'impressions', 'prices', 'country', 'device', 'platform']
 
 
 # 0)

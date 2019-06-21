@@ -22,8 +22,9 @@ RS = 42
 
 # catboost GPU does not support custom metric
 
+
 def cat_preprocess(df):
-    log_transform_cols = ['last_duration', 'session_duration', 'step']
+    log_transform_cols = ['last_duration', 'session_duration', 'step', 'mean_price', 'median_price']
     logger.info(f'Log1p transforming {log_transform_cols}')
     for c in log_transform_cols:
         df[c] = np.log1p(df[c])

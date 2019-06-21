@@ -283,40 +283,46 @@ def compute_session(args):
     return features
 
 
-def compute_session_fts(df, nprocs=None):
+def compute_session_fts(df, filename_base, nprocs=None, recompute=False):
     """
     Initialize feature calculation with multiprocessing
     :param df: input preprocessed dataframe
+    :param filename_base:
     :param nprocs: numer of processes to use, if None all cores minus one is used
     :return: dataframe: input dataframe to model
     """
     t1 = time.time()
-    if nprocs is None:
-        nprocs = mp.cpu_count() - 1
-        nprocs = 12
+    filename = os.path.join(Filepath.gbm_cache_path, f'{filename_base}_fts.snappy')
+    if os.path.isfile(filename) and not recompute:
+        logger.info(f"Load from existing '{filename}'")
+        fts_df = pd.read_parquet(filename)
+    else:
+        if nprocs is None:
+            nprocs = mp.cpu_count() - 1
         logger.info('Using {} cores'.format(nprocs))
 
-    # get all session ids
-    sids = df['session_id'].unique()
-    fts = []
-    # compute_session((sids, df))
+        # get all session ids
+        sids = df['session_id'].unique()
+        fts = []
+        # compute_session((sids, df))
 
-    # create iterator to pass in args for pool
-    def args_gen():
-        for i in range(nprocs):
-            yield (sids[range(i, len(sids), nprocs)], df)
+        # create iterator to pass in args for pool
+        def args_gen():
+            for i in range(nprocs):
+                yield (sids[range(i, len(sids), nprocs)], df)
 
-    # init multiprocessing pool
-    pool = mp.Pool(nprocs)
-    for ft in pool.map(compute_session, args_gen()):
-        fts.append(ft)
-    pool.close()
-    pool.join()
+        # init multiprocessing pool
+        pool = mp.Pool(nprocs)
+        for ft in pool.map(compute_session, args_gen()):
+            fts.append(ft)
+        pool.close()
+        pool.join()
 
-    # concatenate results from each pool
-    fts_df = pd.concat(fts, axis=0)
-    logger.info(f'\n{fts_df.head()}\n{fts_df.columns}')
-    logger.info(f'Total time taken to generate fts: {(time.time()-t1)/60:.2f} mins')
+        # concatenate results from each pool
+        fts_df = pd.concat(fts, axis=0)
+        logger.info(f'\n{fts_df.head()}\n{fts_df.columns}')
+        df.to_parquet(filename, index=False)
+        logger.info(f'Total time taken to generate fts: {(time.time()-t1)/60:.2f} mins')
     return fts_df
 
 
@@ -383,7 +389,8 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
     add_test_str = 'test_added' if add_test else 'no_test_added'
     logger.info(f"\n{'='*10} Creating {mode.upper()} model inputs with {nrows:,} rows, "
                 f"{add_test_str} and recompute={recompute} {'='*10}")
-    filename = os.path.join(Filepath.gbm_cache_path, f'{mode}_inputs_{nrows}_{add_test_str}.snappy')
+    filename_base = f'{mode}_inputs_{nrows}_{add_test_str}'
+    filename = os.path.join(Filepath.gbm_cache_path, f'{filename_base}.snappy')
 
     if os.path.isfile(filename) and not recompute:
         logger.info(f"Load from existing '{filename}'")
@@ -403,14 +410,14 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         df.loc[sort_mask, 'sort_order'] = df.loc[sort_mask, 'reference'].map(change_sort_order_mapper)
 
         # add impression change indicator
-        df = different_impressions(df)
+        # df = different_impressions(df)
 
         # process impressions
         df['impressions'] = df['impressions'].str.split('|')
 
         # get some numeric and interactions ============================================================================
         logger.info('Compute session features')
-        df = compute_session_fts(df)
+        df = compute_session_fts(df, filename_base, nprocs=7)
 
         # convert impressions to int
         df['impressions'] = df['impressions'].apply(lambda x: [int(i) for i in x])
@@ -486,11 +493,11 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
                                                                       axis=1)
         df[['mean_star', 'median_star', 'std_star']] = df.apply(lambda row: _add_mean_median_std(row['stars']), axis=1)
 
-        logger.info('Transform ratings and stars to relative rank')
+        # logger.info('Transform ratings and stars to relative rank')
 
-        def _rank_value(row):
-            ranks = rankdata(row, method='dense')
-            return ranks / (ranks.max())
+        # def _rank_value(row):
+        #     ranks = rankdata(row, method='dense')
+        #     return ranks / (ranks.max())
 
         # # add rating and star rank
         # df['ratings'] = df['ratings'].apply(_rank_value)
@@ -572,50 +579,50 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
 
         # def _add_mean_median(prices):
         #     return pd.Series([np.mean(prices), np.median(prices)])
-        df[['mean_price', 'median_price', 'std_price']] = df.apply(lambda row: _add_mean_median_std(row['prices']), axis=1)
+        df[['mean_price', 'median_price', 'std_price']] = df.apply(lambda row: _add_mean_median_std(row['prices']),
+                                                                   axis=1)
 
-        logger.info('Add price rank')
-        # add price rank
-        df['prices_rank'] = df['prices'].apply(_rank_value)
+        # logger.info('Add price rank')
+        # # add price rank
+        # df['prices_rank'] = df['prices'].apply(_rank_value)
+        #
+        # # add first half page (first 12) price rank
+        # def _rank_half_price(prices_row):
+        #     # rank first 12 prices
+        #     ranks = rankdata(prices_row[:12], method='dense')
+        #     return ranks / (ranks.max())
+        #
+        # # add price rank
+        # df['half_prices_rank'] = df['prices'].apply(_rank_half_price)
 
-        # add first half page (first 12) price rank
-        def _rank_half_price(prices_row):
-            # rank first 12 prices
-            ranks = rankdata(prices_row[:12], method='dense')
-            return ranks / (ranks.max())
+        # add price quantile instead
+        def get_bins(prices):
+            # get 5 bins
+            # try:
+            prices_len = len(set(prices))
+            n_bins = 1 if prices_len == 1 else 5  # use 5 bins
+            try:
+                a = list(pd.qcut(prices, n_bins, duplicates='drop').codes)
+            except:
+                print(prices, n_bins, prices_len)
+            return a
 
-        # add price rank
-        df['half_prices_rank'] = df['prices'].apply(_rank_half_price)
+        df['price_bin'] = df['prices'].apply(get_bins)
 
         logger.info('Pad 0s for prices length shorter than 25')
         padding_mask = df['prices'].str.len() < 25
-        df = padding(df, pad_mask=padding_mask, cols_to_pad=['prices', 'prices_rank'],
+        df = padding(df, pad_mask=padding_mask, cols_to_pad=['prices', 'price_bin'],  # 'prices_rank'],
                      padding_len=25, padding_value=padding_value)
-        # pad the half page price rank
-        half_padding_mask = df['half_prices_rank'].str.len() < 12
-        df = padding(df, pad_mask=half_padding_mask, cols_to_pad=['half_prices_rank'],
-                     padding_len=12, padding_value=padding_value)
-
-        # df.loc[padding_mask, 'prices'] = (df
-        #                                   .loc[padding_mask, 'prices']
-        #                                   .apply(lambda x: np.pad(x, (0, 25 - len(x)),
-        #                                                           mode='constant',
-        #                                                           constant_values=padding_value)))
-        # df.loc[padding_mask, 'prices_rank'] = (df
-        #                                        .loc[padding_mask, 'prices_rank']
-        #                                        .apply(lambda x: np.pad(x, (0, 25-len(x)),
-        #                                                                mode='constant',
-        #                                                                constant_values=padding_value)))
+        # # pad the half page price rank
         # half_padding_mask = df['half_prices_rank'].str.len() < 12
-        # df.loc[half_padding_mask, 'half_prices_rank'] = (df
-        #                                                  .loc[half_padding_mask, 'half_prices_rank']
-        #                                                  .apply(lambda x: np.pad(x, (0, 12-len(x)),
-        #                                                                          mode='constant',
-        #                                                                          constant_values=padding_value)))
+        # df = padding(df, pad_mask=half_padding_mask, cols_to_pad=['half_prices_rank'],
+        #              padding_len=12, padding_value=padding_value)
 
         # current_filters ==============================================================================================
         logger.info('Lower case current filters and split to list')
         df['current_filters'] = df['current_filters'].str.lower().str.split('|')
+        df['n_cfs'] = df['current_filters'].str.len()
+        df['n_cfs'].fillna(0, inplace=True)
         cfs2natural, n_cfs = create_cfs_mapping()
         logger.info(f'There are total {n_cfs} unique filters')
 
@@ -639,8 +646,10 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         # finally expand all column of list to columns
         # expand_cols = ['prices', 'prices_rank', 'last_click', 'prev_click', 'last_interact',
         #                'prev_interact', 'current_filters']
-        expand_cols = ['prices', 'prices_rank', 'prev_click', 'prev_interact', 'current_filters',
-                       'half_prices_rank', 'ratings', 'stars']
+        # expand_cols = ['prices', 'prices_rank', 'prev_click', 'prev_interact', 'current_filters',
+        #                'half_prices_rank', 'ratings', 'stars']
+        expand_cols = ['prices', 'price_bin', 'prev_click', 'prev_interact', 'current_filters',
+                       'ratings', 'stars']
         for col in expand_cols:
             logger.info(f'Expanding on {col}')
             df = expand(df, col)
@@ -673,71 +682,3 @@ if __name__ == '__main__':
 
     logger.info(f'Creating model input: {args}')
     _ = create_model_inputs(**args)
-
-
-# TODO: see if we need to do something about this
-'''In [8]: dups = a.duplicated(['session_id', 'step'], keep=False)
-
-In [9]: a[dups][['session_id', 'timestamp', 'step']]
-Out[9]:
-            session_id           timestamp  step
-162873   07093a858ac92 2018-11-02 18:26:47   1.0
-162875   07093a858ac92 2018-11-03 18:19:33   1.0
-233530   0a058d4e25fc7 2018-11-04 08:22:34   1.0
-233531   0a058d4e25fc7 2018-11-04 08:22:34   2.0
-233532   0a058d4e25fc7 2018-11-04 08:24:20   3.0
-233533   0a058d4e25fc7 2018-11-03 18:22:07   1.0
-233534   0a058d4e25fc7 2018-11-03 18:22:20   2.0
-233535   0a058d4e25fc7 2018-11-03 18:22:30   3.0
-344877   0ed0c1aa802bb 2018-11-06 00:56:22   1.0
-344878   0ed0c1aa802bb 2018-11-05 18:39:13   1.0
-488230   14ffe9351be7c 2018-11-02 08:35:52   1.0
-488231   14ffe9351be7c 2018-11-05 08:07:19   1.0
-571370   1892588e0a4fc 2018-11-01 16:31:21   1.0
-571371   1892588e0a4fc 2018-11-01 16:31:57   2.0
-571372   1892588e0a4fc 2018-11-01 16:32:32   3.0
-571373   1892588e0a4fc 2018-11-01 16:34:24   4.0
-571374   1892588e0a4fc 2018-11-04 17:17:27   1.0
-571375   1892588e0a4fc 2018-11-04 17:19:33   2.0
-571376   1892588e0a4fc 2018-11-04 17:27:38   3.0
-571377   1892588e0a4fc 2018-11-04 17:30:11   4.0
-624610   1acf57dcc79e9 2018-11-06 16:59:26   1.0
-624611   1acf57dcc79e9 2018-11-04 23:07:51   1.0
-851770   2480cd59859f7 2018-11-05 15:42:12   3.0
-851771   2480cd59859f7 2018-11-05 15:42:25   4.0
-851776   2480cd59859f7 2018-11-08 19:38:30   3.0
-851777   2480cd59859f7 2018-11-08 19:38:31   4.0
-932843   27edcc8ce4bae 2018-11-04 16:18:15   1.0
-932844   27edcc8ce4bae 2018-11-04 16:18:41   3.0
-932847   27edcc8ce4bae 2018-11-02 16:12:07   1.0
-932849   27edcc8ce4bae 2018-11-02 16:45:23   3.0
-...                ...                 ...   ...
-4750626  cbe3752713eee 2018-11-07 20:47:19   1.0
-4750627  cbe3752713eee 2018-11-07 20:48:02   2.0
-4750631  cbe3752713eee 2018-11-08 06:57:43   1.0
-4750632  cbe3752713eee 2018-11-08 06:59:18   2.0
-5034450  d8198666e22d6 2018-11-06 01:59:27   1.0
-5034451  d8198666e22d6 2018-11-06 19:55:39   2.0
-5034452  d8198666e22d6 2018-11-07 04:54:05   1.0
-5034453  d8198666e22d6 2018-11-07 04:58:20   2.0
-5377239  e6eb492282abf 2018-11-06 15:09:02   1.0
-5377241  e6eb492282abf 2018-11-06 15:10:25   3.0
-5377242  e6eb492282abf 2018-11-06 15:10:25   4.0
-5377243  e6eb492282abf 2018-11-06 15:11:08   5.0
-5377244  e6eb492282abf 2018-11-06 15:11:08   6.0
-5377245  e6eb492282abf 2018-11-07 17:14:18   1.0
-5377246  e6eb492282abf 2018-11-07 17:15:55   3.0
-5377247  e6eb492282abf 2018-11-07 17:15:56   4.0
-5377248  e6eb492282abf 2018-11-07 17:16:06   5.0
-5377249  e6eb492282abf 2018-11-07 17:19:26   6.0
-5397644  e7c4ab1b14a1a 2018-11-03 12:31:35   1.0
-5397645  e7c4ab1b14a1a 2018-11-04 12:38:02   1.0
-5549869  ee6b5c546af0e 2018-11-04 00:03:38   1.0
-5549870  ee6b5c546af0e 2018-11-04 00:04:11   2.0
-5549872  ee6b5c546af0e 2018-11-03 08:32:08   1.0
-5549873  ee6b5c546af0e 2018-11-03 08:35:38   2.0
-5942464  ff7fb4c84e640 2018-11-02 00:11:26   1.0
-5942465  ff7fb4c84e640 2018-11-02 00:12:26   2.0
-5942467  ff7fb4c84e640 2018-11-02 00:14:41   4.0
-5942468  ff7fb4c84e640 2018-11-04 01:18:51   1.0
-5942469  ff7fb4c84e640 2018-11-04 01:19:33   2.0'''

@@ -41,6 +41,13 @@ def lgb_mrr(y_preds, train_data):
     return 'mrr', np.mean(1 / (pred_label + 1)), True
 
 
+def lgb_preprocess(df):
+    log_transform_cols = ['last_duration', 'session_duration', 'step', 'mean_price', 'median_price']
+    logger.info(f'Log1p transforming {log_transform_cols}')
+    for c in log_transform_cols:
+        df[c] = np.log1p(df[c])
+
+
 def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, feature_importance=True,
           retrain=False, verbose=True):
     # path to where model is saved
@@ -57,6 +64,9 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
     if only_last:
         logger.info('Training ONLY with last row')
         train_inputs = train_inputs.groupby('session_id').last().reset_index(drop=False)
+
+    # a bit processing
+    lgb_preprocess(train_inputs)
 
     # grab unique session ids and use this to split, so that train_inputs with same session_id do not spread to both
     # train and valid

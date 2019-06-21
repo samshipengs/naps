@@ -20,7 +20,7 @@ from create_model_inputs import create_model_inputs, CATEGORICAL_COLUMNS
 from utils import get_logger, get_data_path, check_gpu, ignore_warnings
 from plots import plot_hist, confusion_matrix, plot_imp_lgb, compute_shap_multi_class
 
-ignore_warnings()
+# ignore_warnings()
 
 logger = get_logger('train_lgb')
 Filepath = get_data_path()
@@ -68,6 +68,11 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
     # a bit processing
     lgb_preprocess(train_inputs)
 
+    train_cols = train_inputs.columns
+    logger.info(f'Columns used for training: {train_cols.values}')
+    used_categorical_cols = train_cols[train_cols.isin(CATEGORICAL_COLUMNS)]
+    logger.info(f'Categorical columns in training: {used_categorical_cols.values}')
+
     # grab unique session ids and use this to split, so that train_inputs with same session_id do not spread to both
     # train and valid
     unique_session_ids = train_inputs['session_id'].unique()
@@ -106,7 +111,8 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
         lgb_val_data = lgb.Dataset(x_val, label=y_val, free_raw_data=False)
         # =====================================================================================
         # create model
-        model_filename = os.path.join(model_path, f'lgb_cv{fold}.model')
+        last = 'only_last' if only_last else 'all_rows'
+        model_filename = os.path.join(model_path, f'lgb_cv_{last}_{fold}.model')
         if os.path.isfile(model_filename) and not retrain:
             logger.info(f"Loading model from existing '{model_filename}'")
             # parameters not required.
@@ -118,7 +124,7 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
                             valid_sets=[lgb_trn_data, lgb_val_data],
                             valid_names=['train', 'val'],
                             categorical_feature=cat_ind,
-                            feval=lgb_mrr,
+                            # feval=lgb_mrr,
                             # init_model=lgb.Booster(model_file=model_filename),
                             verbose_eval=100)
             if feature_importance:
@@ -128,7 +134,7 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
                 imp_df['feature_importance'] = clf.feature_importance(importance_type='gain',
                                                                       iteration=clf.best_iteration)
                 imp_df['features'] = x_trn.columns
-                plot_imp_lgb(imp_df, fold)
+                plot_imp_lgb(imp_df, f'lgb_{last}_{fold}')
                 compute_shap_multi_class(clf, x_val, x_val.columns, f'lgb_shap_{fold}')
 
             clf.save_model(model_filename)
@@ -250,17 +256,17 @@ def lgb_tuning(xtrain, base_params, n_searches=200):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 5000000,
+    setup = {'nrows': 1000000,
              'tuning': False,
              'recompute_train': False,
              'add_test': False,
-             'only_last': False,
+             'only_last': True,
              'retrain': True,
              'recompute_test': True}
 
     base_params = {'boosting': 'gbdt',  # gbdt, dart, goss
-                   'num_boost_round': 500,
-                   'learning_rate': 0.03,
+                   'num_boost_round': 1000,
+                   'learning_rate': 0.01,
                    'early_stopping_rounds': 100,
                    'num_class': 25,
                    'objective': 'multiclass',

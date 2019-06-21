@@ -417,7 +417,7 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
 
         # get some numeric and interactions ============================================================================
         logger.info('Compute session features')
-        df = compute_session_fts(df, filename_base, nprocs=None)
+        df = compute_session_fts(df, filename_base, nprocs=10)
 
         # convert impressions to int
         df['impressions'] = df['impressions'].apply(lambda x: [int(i) for i in x])
@@ -609,13 +609,11 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
 
         df['price_bin'] = df['prices'].apply(get_bins)
 
-        logger.info('Pad 0s for prices length shorter than 25 in prices')
+        logger.info('Pad 0s for prices length shorter than 25 in prices and price_bin')
         padding_mask = df['prices'].str.len() < 25
-        df = padding(df, pad_mask=padding_mask, cols_to_pad=['prices'],  # 'prices_rank'],
+        df = padding(df, pad_mask=padding_mask, cols_to_pad=['prices', 'price_bin'],  # 'prices_rank'],
                      padding_len=25, padding_value=padding_value)
-        logger.info('Pad 0s for prices length shorter than 5 in price_bins')
-        padding_mask = df['prices'].str.len() < 5
-        df = padding(df, pad_mask=padding_mask, cols_to_pad=['price_bin'], padding_len=5, padding_value=padding_value)
+
         # # pad the half page price rank
         # half_padding_mask = df['half_prices_rank'].str.len() < 12
         # df = padding(df, pad_mask=half_padding_mask, cols_to_pad=['half_prices_rank'],

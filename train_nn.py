@@ -28,30 +28,13 @@ Filepath = get_data_path()
 RS = 42
 
 
-# def custom_objective(y_true, y_pred):
-#     pred_value = K.max(y_pred*y_true, axis=1)
-#     diff = K.reshape(pred_value, (512, 1)) - y_pred
-#     incorrect_pred_mask = diff < 0
-#     # select the one that is incorrectly predicted
-#     incorrects = tf.boolean_mask(-diff, incorrect_pred_mask)
-#     return K.sum(K.flatten(incorrects))
-
-
-# def custom_objective(y_true, y_pred):
-#     pred_value = K.max(y_pred*y_true, axis=1)
-#     diff = K.max(y_pred, axis=1) - pred_value
-#     return K.sum(diff)
-
-
 def custom_objective(y_true, y_pred):
     y_pred_value = K.sum(y_true * y_pred, axis=-1)
-    delta = K.maximum(0.0, y_pred - y_pred_value)
-    power = K.pow(delta, 2)
-    sums = K.sum(power, axis=-1)
+    delta = K.maximum(0., y_pred - y_pred_value[:, None])
+    twos = 2**delta
+    mask = K.cast(K.greater(twos-1, 0), 'float32')
+    sums = K.sum(twos*mask, axis=-1)
     return K.mean(sums)
-
-    # neg = K.max((1.0 - y_true) * y_pred, axis=-1)
-    # return K.mean(K.maximum(0.0, neg - pos + 1), axis=-1)
 
 
 class LoggingCallback(Callback):
@@ -126,8 +109,9 @@ def log_median(df, col):
 
 def nn_prep(df):
     # fill nans
-    df['last_reference_relative_loc_0'] = df['last_reference_relative_loc_0'].fillna(-1)
-    df['last_reference_relative_loc_1'] = df['last_reference_relative_loc_1'].fillna(-1)
+    df['last_reference_relative_loc'] = df['last_reference_relative_loc'].fillna(-1)
+    # df['last_reference_relative_loc_0'] = df['last_reference_relative_loc_0'].fillna(-1)
+    # df['last_reference_relative_loc_1'] = df['last_reference_relative_loc_1'].fillna(-1)
     # df['imp_changed'] = df['imp_changed'].fillna(-1)
     rank_cols = [i for i in df.columns if 'rank' in i]
     df[rank_cols] = df[rank_cols].fillna(-1)
@@ -211,7 +195,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
             logger.info(f"Loading model from existing '{model_filename}'")
             model = load_model(model_filename)
         else:
-            model = build_model(input_dim=150)
+            model = build_model(input_dim=156)
             nparams = model.count_params()
             # opt = optimizers.Adam(lr=params['learning_rate'])
             opt = optimizers.Adagrad(lr=params['learning_rate'])
@@ -296,7 +280,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 1000000,
+    setup = {'nrows': 5000000,
              'recompute_train': False,
              'add_test': False,
              'only_last': False,
@@ -304,10 +288,10 @@ if __name__ == '__main__':
              'recompute_test': False}
 
     params = {'batch_size': 512,
-              'n_epochs': 20,
+              'n_epochs': 500,
               'early_stopping_patience': 100,
               'reduce_on_plateau_patience': 30,
-              'learning_rate': 0.01,
+              'learning_rate': 0.001,
               'max_lr': 0.005,
               'min_lr': 0.0001,
               'use_cyc': False,

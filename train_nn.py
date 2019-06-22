@@ -37,50 +37,7 @@ def custom_objective(y_true, y_pred):
     return K.mean(sums)
 
 
-class LoggingCallback(Callback):
-    """Callback that logs message at end of epoch.
-    """
-    def __init__(self, print_fcn=print):
-        Callback.__init__(self)
-        self.print_fcn = print_fcn
-
-    def on_epoch_end(self, epoch, logs={}):
-        msg = "[Epoch: %i] %s" % (epoch, ", ".join("%s: %f" % (k, v) for k, v in logs.items()))
-        self.print_fcn(msg)
-
-
-class LRTensorBoard(TensorBoard):
-    def __init__(self, log_dir):  # add other arguments to __init__ if you need
-        super().__init__(log_dir=log_dir)
-
-    def on_epoch_end(self, epoch, logs=None):
-        logs.update({'lr': K.eval(self.model.optimizer.lr)})
-        super().on_epoch_end(epoch, logs)
-
-
-# def iterate_minibatches(numerics, prices, clicks, targets, batch_size, shuffle=True):
-#     # default we will shuffle
-#     indices = np.arange(len(targets))
-#     while True:
-#         if shuffle:
-#             np.random.shuffle(indices)
-#
-#         remainder = len(targets) % batch_size
-#         for start_idx in range(0, len(targets), batch_size):
-#             if remainder != 0 and start_idx + batch_size >= len(targets):
-#                 excerpt = indices[len(targets) - batch_size:len(targets)]
-#             else:
-#                 excerpt = indices[start_idx:start_idx + batch_size]
-#
-#             numerics_batch = numerics[excerpt]
-#             prices_batch = prices[excerpt]
-#             clicks_batch = clicks[excerpt]
-#             targets_batch = targets[excerpt]
-#
-#             yield ([numerics_batch, prices_batch, clicks_batch], targets_batch)
-
 def iterate_minibatches(input_x, targets, batch_size, shuffle=True):
-    # default we will shuffle
     indices = np.arange(len(targets))
     while True:
         if shuffle:
@@ -94,32 +51,47 @@ def iterate_minibatches(input_x, targets, batch_size, shuffle=True):
                 excerpt = indices[start_idx:start_idx + batch_size]
 
             input_batch = input_x[excerpt]
-            # prices_batch = prices[excerpt]
-            # clicks_batch = clicks[excerpt]
             targets_batch = targets[excerpt]
-            # print('BATCH>>>', targets_batch.shape)
-            # yield ([numerics_batch, prices_batch, clicks_batch], targets_batch)
             yield (input_batch, targets_batch)
 
 
-def log_median(df, col):
-    df[col] = np.log1p(df[col])
-    df[col] = df[col]/np.median(df[col])
+def log_median(df, col, overall=False, nan_mask=0):
+    # log((1+value)/(1+median))
+    # df[col] = np.log1p(df[col])
+    # df[col] = df[col]/np.median(df[col])
+    if overall:
+        all_values = np.concatenate(df[col].values)
+        mask = np.concatenate(df[col] != nan_mask)
+        median = np.median(all_values[mask])
+        df[col] = np.log((1 + df[col]) / (1 + median))
+    else:
+        df[col] = np.log((1+df[col])/(1+np.median(df[col])))
 
 
 def nn_prep(df):
+    # specify some columns that we do not want in training
+    cf_cols = [i for i in df.columns if 'current_filters' in i]
+    price_cols = [i for i in df.columns if re.match(r'prices_\d', i)]
+    drop_cols = cf_cols + price_cols + ['country', 'platform']
+    drop_cols = [col for col in df.columns if col in drop_cols]
+    # drop col
+    logger.info(f'Drop columns:\n {drop_cols}')
+    df.drop(drop_cols, axis=1, inplace=True)
+
     # fill nans
     df['last_reference_relative_loc'] = df['last_reference_relative_loc'].fillna(-1)
-    # df['last_reference_relative_loc_0'] = df['last_reference_relative_loc_0'].fillna(-1)
-    # df['last_reference_relative_loc_1'] = df['last_reference_relative_loc_1'].fillna(-1)
-    # df['imp_changed'] = df['imp_changed'].fillna(-1)
+    df['imp_changed'] = df['imp_changed'].fillna(-1)
     rank_cols = [i for i in df.columns if 'rank' in i]
     df[rank_cols] = df[rank_cols].fillna(-1)
+    # fill all nan with zeros now
     df.fillna(0, inplace=True)
 
     # some transformation
     log_median(df, 'last_duration')
     log_median(df, 'session_duration')
+    price_bins_cols = [i for i in df.columns if 'bin' in i]
+    df[price_bins_cols] = df[price_bins_cols]/5
+
     # ohe
     # ohe_cols = ['last_action_type', 'fs', 'sort_order']
     ohe_cols = ['last_action_type']
@@ -127,36 +99,32 @@ def nn_prep(df):
     for col in ohe_cols:
         logger.info(f'One hot: {col}')
         df[col] = df[col].astype(int)
-        # df = pd.get_dummies(df, prefix=[col], drop_first=True)
         n_unique = df[col].nunique()
         df[col] = df[col].apply(lambda v: np.eye(n_unique, dtype=int)[v][1:])
         expand(df, col)
 
+    filename = 'train_inputs.snappy'
+    df.to_parquet(os.path.join(Filepath.cache_path, filename), index=False)
+    return df
 
-def train(train_inputs, params, only_last=False, retrain=False):
+
+def train(train_df, params, only_last=False, retrain=False):
     # path to where model is saved
     model_path = Filepath.model_path
 
-    # specify some columns that we do not want in training
-    cf_cols = [i for i in train_inputs.columns if 'current_filters' in i]
-    price_cols = [i for i in train_inputs.columns if re.match(r'prices_\d', i)]
-    drop_cols = cf_cols + price_cols  # + ['country', 'platform']
-    # drop cf col for now
-    train_inputs.drop(drop_cols, axis=1, inplace=True)
-    logger.debug(f'train columns: {train_inputs.columns}')
-    # if only use the last row of train_inputs to train
+    # if only use the last row of train_df to train
     if only_last:
         logger.info('Training ONLY with last row')
-        train_inputs = train_inputs.groupby('session_id').last().reset_index(drop=False)
+        train_df = train_df.groupby('session_id').last().reset_index(drop=False)
 
-    # grab unique session ids and use this to split, so that train_inputs with same session_id do not spread to both
+    # grab unique session ids and use this to split, so that train_df with same session_id do not spread to both
     # train and valid
-    unique_session_ids = train_inputs['session_id'].unique()
+    unique_session_ids = train_df['session_id'].unique()
 
     kf = ShuffleSplit(n_splits=5, test_size=0.15, random_state=RS)
 
-    # a bit preprocessing
-    nn_prep(train_inputs)
+    # a bit prep-rocessing
+    nn_prep(train_df)
 
     batch_size = params['batch_size']
     n_epochs = params['n_epochs']
@@ -168,10 +136,10 @@ def train(train_inputs, params, only_last=False, retrain=False):
         logger.info(f'Training fold {fold}: train len={len(trn_ind):,} | val len={len(val_ind):,}')
         # get session_id used for train
         trn_ids = unique_session_ids[trn_ind]
-        trn_mask = train_inputs['session_id'].isin(trn_ids)
+        trn_mask = train_df['session_id'].isin(trn_ids)
 
-        x_trn, x_val = (train_inputs[trn_mask].reset_index(drop=True),
-                        train_inputs[~trn_mask].reset_index(drop=True))
+        x_trn, x_val = (train_df[trn_mask].reset_index(drop=True),
+                        train_df[~trn_mask].reset_index(drop=True))
 
         # for validation only last row is needed
         x_val = x_val.groupby('session_id').last().reset_index(drop=False)
@@ -182,7 +150,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
         x_val.drop(['session_id', 'target'], axis=1, inplace=True)
 
         # data generator
-        # train_gen = iterate_minibatches(trn_num, trn_price, trn_click, y_trn, batch_size, shuffle=True)
+        # train_gen = iterate_mini-batches(trn_num, trn_price, trn_click, y_trn, batch_size, shuffle=True)
         y_trn_binary = to_categorical(y_trn)
         y_val_binary = to_categorical(y_val)
         train_gen = iterate_minibatches(x_trn.values, y_trn_binary, batch_size, shuffle=True)
@@ -197,8 +165,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
         else:
             model = build_model(input_dim=156)
             nparams = model.count_params()
-            # opt = optimizers.Adam(lr=params['learning_rate'])
-            opt = optimizers.Adagrad(lr=params['learning_rate'])
+            opt = optimizers.Adam(lr=params['learning_rate'])
             # model.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=['accuracy'])
             model.compile(optimizer=opt, loss="categorical_crossentropy", metrics=['accuracy'])
             # model.compile(optimizer=opt, loss=custom_objective, metrics=['categorical_crossentropy'])
@@ -217,11 +184,11 @@ def train(train_inputs, params, only_last=False, retrain=False):
             tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True, write_grads=True)
             callbacks.append(tb)
             # lr
-            lr = LRTensorBoard(log_dir)
-            callbacks.append(lr)
+            # lr = LRTensorBoard(log_dir)
+            # callbacks.append(lr)
             # logging
-            log = LoggingCallback(logger.info)
-            callbacks.append(log)
+            # log = LoggingCallback(logger.info)
+            # callbacks.append(log)
             if params['early_stop']:
                 # simple early stopping
                 es = EarlyStopping(monitor='val_loss', mode='min', patience=params['early_stopping_patience'],
@@ -252,7 +219,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
                                           validation_steps=len(y_val) // batch_size)
 
         # make prediction
-        x_trn = train_inputs[trn_mask].reset_index(drop=True)
+        x_trn = train_df[trn_mask].reset_index(drop=True)
         x_trn = x_trn.groupby('session_id').last().reset_index(drop=False)
         y_trn = x_trn['target'].values
         x_trn.drop(['session_id', 'target'], axis=1, inplace=True)

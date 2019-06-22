@@ -120,7 +120,7 @@ def basic_preprocess_sessions(df, mode, nrows, recompute=False):
     :param recompute:
     :return: basic cleaned dataframe
     """
-    filepath = Filepath.gbm_cache_path
+    filepath = Filepath.cache_path
     filename = os.path.join(filepath, f'basic_preprocessed_{mode}_{nrows}.snappy')
 
     if os.path.isfile(filename) and not recompute:
@@ -180,7 +180,7 @@ def city2country(df, recompute=False):
     df['country'] = df['city'].str.split(', ').str[-1]
     df['country'] = df['country'].str.lower()
     df.drop('city', axis=1, inplace=True)
-    filepath = Filepath.gbm_cache_path
+    filepath = Filepath.cache_path
     filename = os.path.join(filepath, 'country_mapping.npy')
 
     # then mapper to int
@@ -197,7 +197,7 @@ def city2country(df, recompute=False):
 
 def platform2int(df, recompute=False):
     logger.info('Converting platform to int')
-    filepath = Filepath.gbm_cache_path
+    filepath = Filepath.cache_path
     filename = os.path.join(filepath, 'platform_mapping.npy')
 
     # then mapper to int
@@ -213,7 +213,7 @@ def platform2int(df, recompute=False):
 
 def device2int(df, recompute=False):
     logger.info('Converting device to int')
-    filepath = Filepath.gbm_cache_path
+    filepath = Filepath.cache_path
     filename = os.path.join(filepath, 'device_mapping.npy')
 
     # then mapper to int
@@ -230,7 +230,7 @@ def device2int(df, recompute=False):
 def preprocess_data(mode, nrows=None, add_test=True, recompute=False):
     nrows_str = 'all' if nrows is None else nrows
     add_test_str = 'test_added' if add_test else 'no_test_added'
-    filename = os.path.join(Filepath.gbm_cache_path, f'preprocess_{mode}_{nrows_str}_{add_test_str}.snappy')
+    filename = os.path.join(Filepath.cache_path, f'preprocess_{mode}_{nrows_str}_{add_test_str}.snappy')
 
     if os.path.isfile(filename) and not recompute:
         logger.info(f"Load from existing '{filename}'")

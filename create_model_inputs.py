@@ -15,48 +15,8 @@ Filepath = get_data_path()
 CATEGORICAL_COLUMNS = ['country', 'device', 'platform', 'fs', 'sort_order', 'last_action_type']
 
 
-# def meta_encoding(recompute=False):
-#     """
-#     Get encoding, i.e. the properties from meta csv
-#     :param recompute:
-#     :return:
-#         meta_mapping: dict, mapping {123: [1, 0, 0, 1, 0, ...], ...}
-#         n_properties: number of unique properties
-#     """
-#     filepath = Filepath.gbm_cache_path
-#     filename = os.path.join(filepath, 'meta_mapping.npy')
-#     if os.path.isfile(filename) and not recompute:
-#         logger.info(f'Load from existing file: {filename}')
-#         meta_mapping = np.load(filename).item()
-#         n_properties = len(meta_mapping[list(meta_mapping.keys())[0]])
-#     else:
-#         logger.info('Load meta data')
-#         meta_df = load_data('item_metadata')
-#
-#         logger.info('Lower and split properties str to list')
-#         meta_df['properties'] = meta_df['properties'].str.lower().str.split('|')
-#
-#         logger.info('Get all unique properties')
-#         unique_properties = list(set(np.concatenate(meta_df['properties'].values)))
-#         property2natural = {v: k for k, v in enumerate(unique_properties)}
-#         n_properties = len(unique_properties)
-#         logger.info(f'Total number of unique meta properties: {n_properties}')
-#
-#         logger.info('Convert the properties to ohe and superpose for each item_id')
-#         meta_df['properties'] = meta_df['properties'].apply(lambda ps: [property2natural[p] for p in ps])
-#         meta_df['properties'] = meta_df['properties'].apply(lambda ps: np.sum(np.eye(n_properties, dtype=np.int16)[ps],
-#                                                                               axis=0))
-#         logger.info('Create mappings')
-#         meta_mapping = dict(meta_df[['item_id', 'properties']].values)
-#         # add a mapping (all zeros) for the padded impression ids
-#         # meta_mapping[0] = np.zeros(n_properties, dtype=int)
-#         logger.info('Saving meta mapping')
-#         np.save(filename, meta_mapping)
-#     return meta_mapping, n_properties
-
-
 def meta_encoding(recompute=False):
-    filepath = Filepath.gbm_cache_path
+    filepath = Filepath.cache_path
     filename = os.path.join(filepath, 'meta_encodings.csv')
     if os.path.isfile(filename) and not recompute:
         logger.info(f"Load from existing file: '{filename}'")
@@ -94,7 +54,7 @@ def create_cfs_mapping(select_n_filters=32, recompute=False):
         filters2natural: dict, mapping dict e.g. {'focus on distance': 42}
         select_n_filters+1: int, plus one as the rest filters all get assigned to one number
     """
-    filename = os.path.join(Filepath.gbm_cache_path, 'filters_mapping.npy')
+    filename = os.path.join(Filepath.cache_path, 'filters_mapping.npy')
     if os.path.isfile(filename) and not recompute:
         logger.info(f"Load current filters mapping from existing: '{filename}'")
         filters2natural = np.load(filename).item()
@@ -136,7 +96,7 @@ def change_sort_order_mapping():
 
 
 def filter_selection_mapping(select_n_filters=32, recompute=False):
-    filename = os.path.join(Filepath.gbm_cache_path, 'filters_selection_mapping.npy')
+    filename = os.path.join(Filepath.cache_path, 'filters_selection_mapping.npy')
     if os.path.isfile(filename) and not recompute:
         logger.info(f"Load filters mapping from existing: '{filename}'")
         fs2natural = np.load(filename).item()
@@ -162,39 +122,24 @@ def filter_selection_mapping(select_n_filters=32, recompute=False):
     return fs2natural, select_n_filters + 1
 
 
+# grab mappings
 action_type2natural, n_unique_actions = create_action_type_mapping()
 n_unique_cs = len(change_sort_order_mapping())
 _, n_unique_fs = filter_selection_mapping(select_n_filters=32)
 
 
-# def find_relative_ref_loc(row):
-#     last_ref = row['last_reference']
-#     if pd.isna(last_ref) or type(row['impressions']) != list:
-#         # first row
-#         return np.nan
-#     else:
-#         # try:
-#         imps = list(row['impressions'])
-#         if last_ref in imps:
-#             return (imps.index(last_ref)+1)/25
-#         else:
-#             return np.nan
-
-
 def find_relative_ref_loc(row):
-    last_action_type, last_ref = row['last_action_type'], row['last_reference']
+    last_ref = row['last_reference']
     if pd.isna(last_ref) or type(row['impressions']) != list:
         # first row
-        return [np.nan, np.nan]
+        return np.nan
     else:
+        # try:
         imps = list(row['impressions'])
         if last_ref in imps:
-            if last_action_type == 0:
-                return [(imps.index(last_ref)+1)/25, np.nan]
-            else:
-                return [np.nan, (imps.index(last_ref)+1)/25]
+            return (imps.index(last_ref)+1)/25
         else:
-            return [np.nan, np.nan]
+            return np.nan
 
 
 def compute_session_func(grp):
@@ -299,7 +244,7 @@ def compute_session(args):
     return features
 
 
-def compute_session_fts(df, filename_base, nprocs=None, recompute=False):
+def compute_session_fts(df, nprocs=None):
     """
     Initialize feature calculation with multiprocessing
     :param df: input preprocessed dataframe
@@ -308,37 +253,31 @@ def compute_session_fts(df, filename_base, nprocs=None, recompute=False):
     :return: dataframe: input dataframe to model
     """
     t1 = time.time()
-    filename = os.path.join(Filepath.gbm_cache_path, f'{filename_base}_fts.snappy')
-    if os.path.isfile(filename) and not recompute:
-        logger.info(f"Load from existing '{filename}'")
-        fts_df = pd.read_parquet(filename)
-    else:
-        if nprocs is None:
-            nprocs = mp.cpu_count() - 1
-        logger.info('Using {} cores'.format(nprocs))
+    if nprocs is None:
+        nprocs = mp.cpu_count() - 1
+    logger.info('Using {} cores'.format(nprocs))
 
-        # get all session ids
-        sids = df['session_id'].unique()
-        fts = []
-        # compute_session((sids, df))
+    # get all session ids
+    sids = df['session_id'].unique()
+    fts = []
+    # compute_session((sids, df))
 
-        # create iterator to pass in args for pool
-        def args_gen():
-            for i in range(nprocs):
-                yield (sids[range(i, len(sids), nprocs)], df)
+    # create iterator to pass in args for pool
+    def args_gen():
+        for i in range(nprocs):
+            yield (sids[range(i, len(sids), nprocs)], df)
 
-        # init multiprocessing pool
-        pool = mp.Pool(nprocs)
-        for ft in pool.map(compute_session, args_gen()):
-            fts.append(ft)
-        pool.close()
-        pool.join()
+    # init multiprocessing pool
+    pool = mp.Pool(nprocs)
+    for ft in pool.map(compute_session, args_gen()):
+        fts.append(ft)
+    pool.close()
+    pool.join()
 
-        # concatenate results from each pool
-        fts_df = pd.concat(fts, axis=0)
-        logger.info(f'\n{fts_df.head()}\n{fts_df.columns}')
-        df.to_parquet(filename, index=False)
-        logger.info(f'Total time taken to generate fts: {(time.time()-t1)/60:.2f} mins')
+    # concatenate results from each pool
+    fts_df = pd.concat(fts, axis=0)
+    logger.info(f'\n{fts_df.head()}\n{fts_df.columns}')
+    logger.info(f'Total time taken to generate fts: {(time.time()-t1)/60:.2f} mins')
     return fts_df
 
 
@@ -349,7 +288,7 @@ def save_cache(arr, name):
     :param name:
     :return:
     """
-    filepath = Filepath.gbm_cache_path
+    filepath = Filepath.cache_path
     np.save(os.path.join(filepath, name), arr)
 
 
@@ -406,7 +345,7 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
     logger.info(f"\n{'='*10} Creating {mode.upper()} model inputs with {nrows:,} rows, "
                 f"{add_test_str} and recompute={recompute} {'='*10}")
     filename_base = f'{mode}_inputs_{nrows}_{add_test_str}'
-    filename = os.path.join(Filepath.gbm_cache_path, f'{filename_base}.snappy')
+    filename = os.path.join(Filepath.cache_path, f'{filename_base}.snappy')
 
     if os.path.isfile(filename) and not recompute:
         logger.info(f"Load from existing '{filename}'")
@@ -417,7 +356,6 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         df = preprocess_data(mode, nrows=nrows, add_test=add_test, recompute=False)
         # ==============================================================================================================
         # add fs (filter selection encoding) and change of sort order encoding, see mapping in preprocessing
-
         fs_mask = df['action_type'] == action_type2natural['filter selection']
         sort_mask = df['action_type'] == action_type2natural['change of sort order']
         fs_mapper, _ = filter_selection_mapping(select_n_filters=32)
@@ -433,7 +371,7 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
 
         # get some numeric and interactions ============================================================================
         logger.info('Compute session features')
-        df = compute_session_fts(df, filename_base, nprocs=10)
+        df = compute_session_fts(df, nprocs=10)
 
         # convert impressions to int
         df['impressions'] = df['impressions'].apply(lambda x: [int(i) for i in x])
@@ -511,21 +449,20 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
 
         # logger.info('Transform ratings and stars to relative rank')
 
-        # def _rank_value(row):
-        #     ranks = rankdata(row, method='dense')
-        #     return ranks / (ranks.max())
+        def _rank_value(row):
+            ranks = rankdata(row, method='dense')
+            return ranks / (ranks.max())
 
-        # # add rating and star rank
-        # df['ratings'] = df['ratings'].apply(_rank_value)
-        # df['stars'] = df['stars'].apply(_rank_value)
+        # add rating and star rank
+        df['ratings'] = df['ratings'].apply(_rank_value)
+        df['stars'] = df['stars'].apply(_rank_value)
 
         # padding
         df['n_imps'] = df['impressions'].str.len()
         padding_mask = df['n_imps'] < 25
         # pad zeros for length less than 25
-        # cols_to_pad = ['impressions', 'last_click', 'prev_click', 'last_interact', 'prev_interact']
         cols_to_pad = ['impressions', 'prev_click', 'prev_interact']
-        df = padding(df, pad_mask=padding_mask, cols_to_pad=cols_to_pad, padding_len=25, padding_value=0)
+        df = padding(df, pad_mask=padding_mask, cols_to_pad=cols_to_pad, padding_len=25, padding_value=np.nan)
 
         # pad ratings and stars
         cols_to_pad = ['ratings', 'stars']
@@ -614,21 +551,17 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         # add price quantile instead
         def get_bins(prices):
             # get 5 bins
-            # try:
             prices_len = len(set(prices))
             n_bins = 1 if prices_len == 1 else 5  # use 5 bins
-            try:
-                a = list(pd.qcut(prices, n_bins, duplicates='drop').codes)
-            except:
-                print(prices, n_bins, prices_len)
-            return a
+            return list(pd.qcut(prices, n_bins, duplicates='drop').codes)
+
         logger.info('Getting price bins')
         df['price_bin'] = df['prices'].apply(get_bins)
 
         logger.info('Pad 0s for prices length shorter than 25 in prices and price_bin')
         padding_mask = df['prices'].str.len() < 25
-        df = padding(df, pad_mask=padding_mask, cols_to_pad=['prices', 'price_bin'],  # 'prices_rank'],
-                     padding_len=25, padding_value=padding_value)
+        df = padding(df, pad_mask=padding_mask, cols_to_pad=['prices', 'price_bin'], padding_len=25,
+                     padding_value=padding_value)
 
         # # pad the half page price rank
         # half_padding_mask = df['half_prices_rank'].str.len() < 12
@@ -666,7 +599,7 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         # expand_cols = ['prices', 'prices_rank', 'prev_click', 'prev_interact', 'current_filters',
         #                'half_prices_rank', 'ratings', 'stars']
         expand_cols = ['prices', 'price_bin', 'prev_click', 'prev_interact', 'current_filters',
-                       'ratings', 'stars', 'last_reference_relative_loc']
+                       'ratings', 'stars']
         for col in expand_cols:
             logger.info(f'Expanding on {col}')
             df = expand(df, col)

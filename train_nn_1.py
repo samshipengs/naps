@@ -284,7 +284,7 @@ if __name__ == '__main__':
     # get the test inputs
     test_inputs = create_model_inputs(mode='test', nrows=setup['test_rows'], recompute=setup['recompute_test'])
     # test_inputs = test_inputs.sort_values(by=['cust'])
-    test_ids = np.load(os.path.join(Filepath.gbm_cache_path, 'test_ids.npy'))
+    test_ids = np.load(os.path.join(Filepath.cache_path, 'test_ids.npy'))
     test_inputs['session_id'] = test_ids
     test_inputs = test_inputs.groupby('session_id').last().reset_index(drop=True)
     # make predictions on test

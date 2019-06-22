@@ -26,8 +26,8 @@ def check_dir(dirs):
 
 def get_data_path():
     path_dict = {'data_path': './data',
-                 'nn_cache_path': './nn_cache',
-                 'gbm_cache_path': './gbm_cache',
+                 'cache_path': './cache',
+                 # 'gbm_cache_path': './gbm_cache',
                  'sub_path': './subs',
                  'model_path': './models',
                  'imp_path': './feature_importance',
@@ -145,7 +145,7 @@ def get_cpu_count(stable=True):
 
 
 def meta_encoding(recompute=False):
-    filepath = Filepath.gbm_cache_path
+    filepath = Filepath.cache_path
     filename = os.path.join(filepath, 'meta_encodings.csv')
     if os.path.isfile(filename) and not recompute:
         logger.info(f"Load from existing file: '{filename}'")

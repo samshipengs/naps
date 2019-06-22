@@ -46,7 +46,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
     # train_inputs['length'] = train_inputs.groupby('session_id')['session_id'].transform('size')
 
     # temp
-    train_clean = pd.read_parquet('./gbm_cache/basic_preprocessed_train_5000000.snappy')
+    train_clean = pd.read_parquet('./cache/basic_preprocessed_train_5000000.snappy')
     length = train_clean.groupby('session_id')['session_id'].size()
     train_inputs['length'] = train_inputs['session_id'].map(length)
     del train_clean

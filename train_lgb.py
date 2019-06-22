@@ -29,7 +29,7 @@ RS = 42
 
 
 def compute_mrr(y_pred, y_true):
-    pred_label = np.where(np.argsort(y_pred)[:, ::-1] == y_true.values.reshape(-1, 1))[1]
+    pred_label = np.where(np.argsort(y_pred)[:, ::-1] == y_true.reshape(-1, 1))[1]
     return np.mean(1 / (pred_label + 1))
 
 
@@ -42,58 +42,65 @@ def lgb_mrr(y_preds, train_data):
 
 
 def lgb_preprocess(df):
+    # specify some columns that we do not want in training
+    cf_cols = [i for i in df.columns if 'current_filters' in i]
+    price_cols = [i for i in df.columns if re.match(r'prices_\d', i)]
+    prev_cols = [i for i in df.columns if 'prev' in i]
+    drop_cols = cf_cols + price_cols + prev_cols # + ['country', 'platform']
+    drop_cols = [col for col in df.columns if col in drop_cols]
+
+    # drop cols
+    logger.info(f'Drop columns:\n {drop_cols}')
+    df.drop(drop_cols, axis=1, inplace=True)
+
     log_transform_cols = ['last_duration', 'session_duration', 'step', 'mean_price', 'median_price']
     for col in log_transform_cols:
         logger.info(f'Log1p transforming {col}')
         df[col] = np.log1p(df[col])
+    filename = 'train_inputs_lgb.snappy'
+    df.to_parquet(os.path.join(Filepath.cache_path, filename), index=False)
+    return df
 
 
-def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, feature_importance=True,
+def train(train_df, train_params, n_fold=5, test_fraction=0.15, only_last=False, feature_importance=True,
           retrain=False, verbose=True):
     # path to where model is saved
     model_path = Filepath.model_path
 
-    # specify some columns that we do not want in training
-    cf_cols = [i for i in train_inputs.columns if 'current_filters' in i]
-    price_cols = [i for i in train_inputs.columns if re.match(r'prices_\d', i)]
-    drop_cols = cf_cols + price_cols  # + ['country', 'platform']
-    # drop cf col for now
-    train_inputs.drop(drop_cols, axis=1, inplace=True)
-
-    # if only use the last row of train_inputs to train
+    # if only use the last row of train_df to train
     if only_last:
         logger.info('Training ONLY with last row')
-        train_inputs = train_inputs.groupby('session_id').last().reset_index(drop=False)
+        train_df = train_df.groupby('session_id').last().reset_index(drop=False)
 
     # a bit processing
-    lgb_preprocess(train_inputs)
+    train_df = lgb_preprocess(train_df)
 
-    train_cols = train_inputs.columns
-    logger.info(f'Columns used for training: {train_cols.values}')
+    train_cols = train_df.columns
+    logger.info(f'Columns used for training:\n{train_cols.values}')
     used_categorical_cols = train_cols[train_cols.isin(CATEGORICAL_COLUMNS)]
-    logger.info(f'Categorical columns in training: {used_categorical_cols.values}')
+    logger.info(f'Categorical columns in training:\n{used_categorical_cols.values}')
 
-    # grab unique session ids and use this to split, so that train_inputs with same session_id do not spread to both
+    # grab unique session ids and use this to split, so that train_df with same session_id do not spread to both
     # train and valid
-    unique_session_ids = train_inputs['session_id'].unique()
+    unique_session_ids = train_df['session_id'].unique()
 
     # kf = KFold(n_splits=5, shuffle=True, random_state=RS)
     ss = ShuffleSplit(n_splits=n_fold, test_size=test_fraction, random_state=RS)
 
     # record classifiers and mrr each training
-    clfs = []
-    mrrs = []
+    classifiers = []
+    cv_mrrs = []
     t_init = time.time()
     for fold, (trn_ind, val_ind) in enumerate(ss.split(unique_session_ids)):
         t1 = time.time()
         logger.info(f'Training fold {fold}: train ids len={len(trn_ind):,} | val ids len={len(val_ind):,}')
         # get session_id used for train
         trn_ids = unique_session_ids[trn_ind]
-        trn_mask = train_inputs['session_id'].isin(trn_ids)
+        trn_mask = train_df['session_id'].isin(trn_ids)
         logger.info(f'Training fold {fold}: train len={trn_mask.sum():,} | val len={(~trn_mask).sum():,}')
 
-        x_trn, x_val = (train_inputs[trn_mask].reset_index(drop=True),
-                        train_inputs[~trn_mask].reset_index(drop=True))
+        x_trn, x_val = (train_df[trn_mask].reset_index(drop=True),
+                        train_df[~trn_mask].reset_index(drop=True))
 
         # for validation only last row is needed
         x_val = x_val.groupby('session_id').last().reset_index(drop=False)
@@ -104,7 +111,7 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
         x_val.drop(['session_id', 'target'], axis=1, inplace=True)
 
         # get categorical index
-        cat_ind = [k for k, v in enumerate(x_trn.columns) if v in CATEGORICAL_COLUMNS]
+        cat_ind = [ind for ind, col_name in enumerate(x_trn.columns) if col_name in CATEGORICAL_COLUMNS]
         # =====================================================================================
 
         lgb_trn_data = lgb.Dataset(x_trn, label=y_trn, free_raw_data=False)
@@ -119,7 +126,7 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
             clf = lgb.Booster(model_file=model_filename)
         else:
             # train model
-            clf = lgb.train(params,
+            clf = lgb.train(train_params,
                             lgb_trn_data,
                             valid_sets=[lgb_trn_data, lgb_val_data],
                             valid_names=['train', 'val'],
@@ -140,35 +147,29 @@ def train(train_inputs, params, n_fold=5, test_fraction=0.15, only_last=False, f
             clf.save_model(model_filename)
 
         # make prediction
-        x_trn = train_inputs[trn_mask].reset_index(drop=True)
+        x_trn = train_df[trn_mask].reset_index(drop=True)
         x_trn = x_trn.groupby('session_id').last().reset_index(drop=False)
         y_trn = x_trn['target'].values
         x_trn.drop(['session_id', 'target'], axis=1, inplace=True)
 
         trn_pred = clf.predict(x_trn)
-        trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
-        # plot_hist(trn_pred_label, y_trn, 'train')
-        # confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
-        trn_mrr = np.mean(1 / (trn_pred_label + 1))
-        # save prediction
-        np.save(os.path.join(model_path, 'lgb_trn_0_pred.npy'), trn_pred)
+        trn_mrr = compute_mrr(trn_pred, y_trn)
+        np.save(os.path.join(model_path, f'lgb_trn_{fold}_pred.npy'), trn_pred)
 
         val_pred = clf.predict(x_val)
-        val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
-        # plot_hist(val_pred_label, y_val, 'validation')
-        # confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
-        val_mrr = np.mean(1 / (val_pred_label + 1))
-        logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')
-        np.save(os.path.join(model_path, 'lgb_val_0_pred.npy'), val_pred)
+        val_mrr = compute_mrr(val_pred, y_val)
+        np.save(os.path.join(model_path, f'lgb_val_{fold}_pred.npy'), val_pred)
 
-        clfs.append(clf)
-        mrrs.append((trn_mrr, val_mrr))
+        logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')
+
+        classifiers.append(clf)
+        cv_mrrs.append((trn_mrr, val_mrr))
 
         if verbose:
             logger.info(f'Done training {fold}, took: {(time.time()-t1)/60:.2f} mins')
 
     logger.info(f'Total cv time took: {(time.time()-t_init)/60:.2f} mins')
-    return clfs, mrrs
+    return classifiers, cv_mrrs
 
 
 def lgb_tuning(xtrain, base_params, n_searches=200):
@@ -211,11 +212,11 @@ def lgb_tuning(xtrain, base_params, n_searches=200):
         # get base params
         for base_k, base_v in base_params.items():
             hyper_params[base_k] = base_v
-        # train(train_inputs, params, only_last=False, retrain=False):
+        # train(train_df, params, only_last=False, retrain=False):
         eval_func = partial(train,
                             n_fold=2,
                             test_fraction=0.15,
-                            train_inputs=xtrain,
+                            train_df=xtrain,
                             only_last=False,
                             feature_importance=False,
                             retrain=True,
@@ -307,9 +308,9 @@ if __name__ == '__main__':
             params[k] = v
         # train the model
         logger.info(f"\nParams\n{'=' * 20}\n{pprint.pformat(params)}\n{'=' * 20}")
-        models, mrrs = train(train_inputs, params=params, only_last=setup['only_last'], retrain=setup['retrain'])
-        train_mrr = np.mean([mrr[0] for mrr in mrrs])
-        val_mrr = np.mean([mrr[1] for mrr in mrrs])
+        models, mrrs = train(train_inputs, train_params=params, only_last=setup['only_last'], retrain=setup['retrain'])
+        mean_train_mrr = np.mean([mrr[0] for mrr in mrrs])
+        mean_val_mrr = np.mean([mrr[1] for mrr in mrrs])
         # get the test inputs
         test_inputs = create_model_inputs(mode='test', padding_value=np.nan, recompute=setup['recompute_test'])
 
@@ -350,7 +351,8 @@ if __name__ == '__main__':
         test_sub.rename(columns={'recommendations': 'item_recommendations'}, inplace=True)
         test_sub = test_sub[sub_columns]
         current_time = dt.now().strftime('%m-%d-%H-%M')
-        test_sub.to_csv(os.path.join(Filepath.sub_path, f'lgb_sub_{current_time}_{train_mrr:.4f}_{val_mrr:.4f}.csv'),
+        test_sub.to_csv(os.path.join(Filepath.sub_path,
+                                     f'lgb_sub_{current_time}_{mean_train_mrr:.4f}_{mean_val_mrr:.4f}.csv'),
                         index=False)
         logger.info('Done all')
 

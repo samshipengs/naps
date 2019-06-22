@@ -59,13 +59,13 @@ def log_median(df, col, overall=False, nan_mask=0):
     # log((1+value)/(1+median))
     # df[col] = np.log1p(df[col])
     # df[col] = df[col]/np.median(df[col])
-    if overall:
-        all_values = np.concatenate(df[col].values)
-        mask = np.concatenate(df[col] != nan_mask)
-        median = np.median(all_values[mask])
-        df[col] = np.log((1 + df[col]) / (1 + median))
-    else:
-        df[col] = np.log((1+df[col])/(1+np.median(df[col])))
+    # if overall:
+    #     all_values = np.concatenate(df[col].values)
+    #     mask = np.concatenate(df[col] != nan_mask)
+    #     median = np.median(all_values[mask])
+    #     df[col] = np.log((1 + df[col]) / (1 + median))
+    # else:
+    df[col] = np.log((1+df[col])/(1+np.median(df[col])))
 
 
 def nn_prep(df):
@@ -103,7 +103,7 @@ def nn_prep(df):
         df[col] = df[col].apply(lambda v: np.eye(n_unique, dtype=int)[v][1:])
         expand(df, col)
 
-    filename = 'train_inputs.snappy'
+    filename = 'train_inputs_nn.snappy'
     df.to_parquet(os.path.join(Filepath.cache_path, filename), index=False)
     return df
 
@@ -124,7 +124,7 @@ def train(train_df, params, only_last=False, retrain=False):
     kf = ShuffleSplit(n_splits=5, test_size=0.15, random_state=RS)
 
     # a bit prep-rocessing
-    nn_prep(train_df)
+    train_df = nn_prep(train_df)
 
     batch_size = params['batch_size']
     n_epochs = params['n_epochs']
@@ -229,7 +229,7 @@ def train(train_df, params, only_last=False, retrain=False):
         # plot_hist(trn_pred_label, y_trn, 'train')
         # confusion_matrix(trn_pred_label, y_trn, 'train', normalize=None, level=0, log_scale=True)
         trn_mrr = np.mean(1 / (trn_pred_label + 1))
-        np.save(os.path.join(Filepath.sub_path, 'nn_trn_0_pred.npy'), trn_pred)
+        np.save(os.path.join(Filepath.sub_path, f'nn_trn_{fold}_pred.npy'), trn_pred)
 
         val_pred = model.predict(x=x_val.values, batch_size=1024)
         val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
@@ -237,7 +237,7 @@ def train(train_df, params, only_last=False, retrain=False):
         # confusion_matrix(val_pred_label, y_val, 'val', normalize=None, level=0, log_scale=True)
         val_mrr = np.mean(1 / (val_pred_label + 1))
         logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')
-        np.save(os.path.join(Filepath.sub_path, 'nn_val_0_pred.npy'), val_pred)
+        np.save(os.path.join(Filepath.sub_path, f'nn_val_{fold}_pred.npy'), val_pred)
 
         clfs.append(model)
         mrrs.append((trn_mrr, val_mrr))
@@ -247,7 +247,7 @@ def train(train_df, params, only_last=False, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 5000000,
+    setup = {'nrows': 1000000,
              'recompute_train': False,
              'add_test': False,
              'only_last': False,

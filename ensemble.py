@@ -81,31 +81,31 @@ for fold, (trn_ind, val_ind) in enumerate(ss.split(unique_session_ids)):
     # # clf = GaussianNB()
     # # clf = LinearSVC(penalty='l2', random_state=0, tol=1e-5, probability=True)
     # clf = RandomForestClassifier(n_estimators=500, max_depth=6, random_state=0, n_jobs=-1)
-    # # clf = LogisticRegression(multi_class='multinomial', solver='newton-cg')
-    # clf.fit(x_trn, y_trn)
-    # trn_pred = clf.predict_proba(x_trn)
-    # val_pred = clf.predict_proba(x_val)
-    # print(trn_pred.shape)
+    clf = LogisticRegression(multi_class='multinomial', solver='newton-cg')
+    clf.fit(x_trn, y_trn)
+    trn_pred = clf.predict_proba(x_trn)
+    val_pred = clf.predict_proba(x_val)
+    print(trn_pred.shape)
 
-    model = build_ensemble()
-    nparams = model.count_params()
+    # model = build_ensemble()
+    # nparams = model.count_params()
     # opt = optimizers.Adam(lr=params['learning_rate'])
-    opt = optimizers.Adagrad(lr=0.01)
-    model.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=['accuracy'])
+    # opt = optimizers.Adagrad(lr=0.01)
+    # model.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=['accuracy'])
     # model.compile(optimizer=opt, loss="categorical_crossentropy", metrics=['accuracy'])
     # model.compile(optimizer=opt, loss=custom_objective, metrics=['categorical_crossentropy'])
 
-    logger.info(f'{model.summary()}')
+    # logger.info(f'{model.summary()}')
 
-    history = model.fit(x=x_trn,
-                        y=y_trn,
-                        batch_size=1024,
-                        epochs=50,
-                        verbose=1,
-                        validation_data=(x_val, y_val))
-
-    trn_pred = model.predict(x=x_trn, batch_size=1024)
-    val_pred = model.predict(x=x_val, batch_size=1024)
+    # history = model.fit(x=x_trn,
+    #                     y=y_trn,
+    #                     batch_size=1024,
+    #                     epochs=50,
+    #                     verbose=1,
+    #                     validation_data=(x_val, y_val))
+    #
+    # trn_pred = model.predict(x=x_trn, batch_size=1024)
+    # val_pred = model.predict(x=x_val, batch_size=1024)
 
     # pred label
     # trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]

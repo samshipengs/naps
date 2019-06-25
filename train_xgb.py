@@ -170,19 +170,19 @@ def train(train_df, train_params, n_fold=5, test_fraction=0.15, only_last=False,
             logger.info('Starts training')
             booster = xgb.train(train_params,
                                 dtrain,
-                                num_boost_round=100,
+                                num_boost_round=200,
                                 early_stopping_rounds=10,
                                 feval=evalmetric,
                                 evals=[(dtrain, 'train'), (dval, 'val')])
 
-            if feature_importance:
-                logger.info('Compute feature importance')
-                # grab feature importance
-                imp_df = pd.DataFrame()
-                imp_df['feature_importance'] = booster.get_score(importance_type="gain")
-                imp_df['features'] = x_trn.columns
-                plot_imp_lgb(imp_df, f'xgb_{last}_{fold}')
-                # compute_shap_multi_class(booster, x_val, x_val.columns, f'xgb_shap_{last}_{fold}')
+            # if feature_importance:
+            #     logger.info('Compute feature importance')
+            #     # grab feature importance
+            #     imp_df = pd.DataFrame()
+            #     imp_df['feature_importance'] = booster.get_score(importance_type="gain")
+            #     imp_df['features'] = x_trn.columns
+            #     plot_imp_lgb(imp_df, f'xgb_{last}_{fold}')
+            #     # compute_shap_multi_class(booster, x_val, x_val.columns, f'xgb_shap_{last}_{fold}')
 
             booster.save_model(model_filename)
 

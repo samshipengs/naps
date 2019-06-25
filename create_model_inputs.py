@@ -152,11 +152,11 @@ def compute_session_func(grp):
     # number of records in session
     df['session_size'] = list(range(1, len(df)+1))
 
-    # session_time duration (subtract the min)
-    df['session_duration'] = (df['timestamp'] - df['timestamp'].min()).dt.total_seconds()
-    # but if it is the first row, it is always nan
-    if len(df) == 0:
+    # session_time duration (subtract the min), if it is the first row, it is always nan
+    if len(df) == 1:
         df['session_duration'] = np.nan
+    else:
+        df['session_duration'] = (df['timestamp'] - df['timestamp'].min()).dt.total_seconds()
 
     # get consecutive time difference
     df['last_duration'] = df['timestamp'].diff().dt.total_seconds()

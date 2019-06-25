@@ -121,13 +121,13 @@ def nn_prep(df):
     df.fillna(0, inplace=True)
 
     # some transformation
-    to_log_median_cols = ['last_duration', 'session_duration',
+    to_log_median_cols = ['last_duration', 'session_duration', 'session_size', 'n_imps',
                           'mean_price', 'median_price', 'std_price', 'n_cfs',
                           'step']
     prev_cols = [i for i in df.columns if 'prev' in i]
     to_log_median_cols.extend(prev_cols)
 
-    logger.info(f'Performing log_median columns on:\n{list(to_log_median_cols.columns)}')
+    logger.info(f'Performing log_median columns on:\n{to_log_median_cols}')
     logger.warning('THIS PROBABLY WILL MAKE VALIDATION PERFORMANCE LOOK BETTER THAT IT ACTUALLY IS!!!')
     for col in tqdm(to_log_median_cols):
         log_median(df, col)
@@ -252,15 +252,15 @@ def train(train_df, params, only_last=False, retrain=False):
                                mode='exp_range', gamma=0.99994)
                 callbacks.append(clr)
 
-            history = model.fit_generator(train_gen,
-                                          steps_per_epoch=len(y_trn) // batch_size,
-                                          epochs=n_epochs,
-                                          verbose=1,
-                                          callbacks=callbacks,
-                                          # validation_data=([val_num, val_price, val_click], y_val),
-                                          # validation_data=(x_val.values, y_val),
-                                          validation_data=val_gen,
-                                          validation_steps=len(y_val) // batch_size)
+            _ = model.fit_generator(train_gen,
+                                    steps_per_epoch=len(y_trn) // batch_size,
+                                    epochs=n_epochs,
+                                    verbose=1,
+                                    callbacks=callbacks,
+                                    # validation_data=([val_num, val_price, val_click], y_val),
+                                    # validation_data=(x_val.values, y_val),
+                                    validation_data=val_gen,
+                                    validation_steps=len(y_val) // batch_size)
 
         # make prediction
         x_trn = train_df[trn_mask].reset_index(drop=True)
@@ -299,7 +299,7 @@ if __name__ == '__main__':
              'recompute_test': False}
 
     params = {'batch_size': 512,
-              'n_epochs': 50,
+              'n_epochs': 500,
               'early_stopping_patience': 100,
               'reduce_on_plateau_patience': 30,
               'learning_rate': 0.001,

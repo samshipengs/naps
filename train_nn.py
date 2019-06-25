@@ -39,32 +39,34 @@ RS = 42
 #     return K.mean(sums)
 
 
-def bpr_max(y_true, y_pred, l2=True, weight=1.):
-    # get the predicted value for target
-    y_pred_value = K.sum(y_true * y_pred, axis=-1)
-    # compute softmax
-    softmax = K.softmax(y_pred, axis=-1)
-    # compute the margin between predicted score and the rest
-    delta = y_pred_value[:, None] - y_pred
-    # affply sigmoid over the difference
-    sig_delta = K.sigmoid(delta)
-    # get the mask of non-target (or negative targets)
-    negative_mask = K.cast(K.equal(y_true, 0), 'float32')
-    # positive_mask = K.cast(K.equal(y_true, 1), 'float32')
+def bpr_max_loss(l2=True, weight=1.):
+    def bpr_max(y_true, y_pred):
+        # get the predicted value for target
+        y_pred_value = K.sum(y_true * y_pred, axis=-1)
+        # compute softmax
+        softmax = K.softmax(y_pred, axis=-1)
+        # compute the margin between predicted score and the rest
+        delta = y_pred_value[:, None] - y_pred
+        # affply sigmoid over the difference
+        sig_delta = K.sigmoid(delta)
+        # get the mask of non-target (or negative targets)
+        negative_mask = K.cast(K.equal(y_true, 0), 'float32')
+        # positive_mask = K.cast(K.equal(y_true, 1), 'float32')
 
-    # get the sum of product over negative targets (and then sum over batch)
-    sum_product = softmax * sig_delta * negative_mask
-    # apply negative log
-    neg_logs = -K.mean(K.log(K.sum(sum_product, axis=-1)))
-    # add regularizer which also pushes the negative scores down
-    if l2:
-        reg = K.mean(K.sum(softmax * y_pred**2 * negative_mask, axis=-1))
-    else:
-        reg = K.mean(K.sum(softmax * K.abs(y_pred) * negative_mask, axis=-1))
-    return neg_logs + weight * reg
+        # get the sum of product over negative targets (and then sum over batch)
+        sum_product = softmax * sig_delta * negative_mask
+        # apply negative log
+        neg_logs = -K.mean(K.log(K.sum(sum_product, axis=-1)))
+        # add regularizer which also pushes the negative scores down
+        if l2:
+            reg = K.mean(K.sum(softmax * y_pred**2 * negative_mask, axis=-1))
+        else:
+            reg = K.mean(K.sum(softmax * K.abs(y_pred) * negative_mask, axis=-1))
+        return neg_logs + weight * reg
+    return bpr_max
 
 
-custom_objective = partial(bpr_max, l2=True, weight=1.)
+custom_objective = bpr_max_loss(l2=True, weight=1.)
 
 
 def iterate_minibatches(input_x, targets, batch_size, shuffle=True):
@@ -101,34 +103,39 @@ def log_median(df, col, overall=False, nan_mask=0):
 def nn_prep(df):
     # specify some columns that we do not want in training
     cf_cols = [i for i in df.columns if 'current_filters' in i]
-    price_cols = [i for i in df.columns if re.match(r'prices_\d', i)]
-    drop_cols = cf_cols + price_cols + ['country', 'platform', 'impressions_str']
+    # price_cols = [i for i in df.columns if re.match(r'prices_\d', i)]
+    bin_cols = [i for i in df.columns if 'bin' in i]
+
+    drop_cols = cf_cols + bin_cols + ['country', 'platform', 'impressions_str', 'fs', 'sort_order']
     drop_cols = [col for col in df.columns if col in drop_cols]
     # drop col
-    logger.info(f'Drop columns:\n {drop_cols}')
+    logger.info(f'Preliminary Drop columns:\n {drop_cols}')
     df.drop(drop_cols, axis=1, inplace=True)
 
     # fill nans
-    df['last_reference_relative_loc'] = df['last_reference_relative_loc'].fillna(-1)
-    # TODO
-    # df['imp_changed'] = df['imp_changed'].fillna(-1)
-    rank_cols = [i for i in df.columns if 'rank' in i]
-    df[rank_cols] = df[rank_cols].fillna(-1)
+    df['last_reference_relative_loc'] = df['last_reference_relative_loc'].fillna(0)
+    df['imp_changed'] = df['imp_changed'].fillna(-1)
+    # rank_cols = [i for i in df.columns if 'rank' in i]
+    # df[rank_cols] = df[rank_cols].fillna(0)
     # fill all nan with zeros now
     df.fillna(0, inplace=True)
 
     # some transformation
-    log_median(df, 'last_duration')
-    log_median(df, 'session_duration')
-    distance_cols = [col for col in df.columns if 'prev' in col]
-    for col in tqdm(distance_cols):
+    to_log_median_cols = ['last_duration', 'session_duration',
+                          'mean_price', 'median_price', 'std_price', 'n_cfs',
+                          'step']
+    prev_cols = [i for i in df.columns if 'prev' in i]
+    to_log_median_cols.extend(prev_cols)
+
+    logger.info(f'Performing log_median columns on:\n{list(to_log_median_cols.columns)}')
+    logger.warning('THIS PROBABLY WILL MAKE VALIDATION PERFORMANCE LOOK BETTER THAT IT ACTUALLY IS!!!')
+    for col in tqdm(to_log_median_cols):
         log_median(df, col)
 
-    price_bins_cols = [i for i in df.columns if 'bin' in i]
-    df[price_bins_cols] = df[price_bins_cols]/5
+    # price_bins_cols = [i for i in df.columns if 'bin' in i]
+    # df[price_bins_cols] = df[price_bins_cols]/5
 
-    # ohe
-    # ohe_cols = ['last_action_type', 'fs', 'sort_order']
+    # specify columns for ohe-hot-encoding
     ohe_cols = ['last_action_type']
 
     for col in ohe_cols:
@@ -137,6 +144,8 @@ def nn_prep(df):
         n_unique = df[col].nunique()
         df[col] = df[col].apply(lambda v: np.eye(n_unique, dtype=int)[v][1:])
         expand(df, col)
+
+    logger.info(f'COLUMNS:\n{list(df.columns)}')
 
     filename = 'train_inputs_nn.snappy'
     df.to_parquet(os.path.join(Filepath.cache_path, filename), index=False)

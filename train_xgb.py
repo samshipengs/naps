@@ -9,6 +9,7 @@ from functools import partial
 from datetime import datetime as dt
 from ast import literal_eval
 
+from tqdm import tqdm
 from sklearn.model_selection import KFold, ShuffleSplit
 import xgboost as xgb
 
@@ -51,39 +52,48 @@ def expand(df, col):
     return df
 
 
+def log_median(df, col):
+    df[col] = np.log((1+df[col])/(1+np.median(df[col])))
+
+
 def xgb_prep(df):
     # specify some columns that we do not want in training
     cf_cols = [i for i in df.columns if 'current_filters' in i]
     price_cols = [i for i in df.columns if re.match(r'prices_\d', i)]
-    drop_cols = cf_cols + price_cols + ['country', 'platform']
+
+    drop_cols = cf_cols + price_cols + ['country', 'platform', 'impressions_str', 'fs', 'sort_order']
     drop_cols = [col for col in df.columns if col in drop_cols]
     # drop col
-    logger.info(f'Drop columns:\n {drop_cols}')
+    logger.info(f'Preliminary Drop columns:\n {drop_cols}')
     df.drop(drop_cols, axis=1, inplace=True)
 
-    # fill nans
-    df['last_reference_relative_loc'] = df['last_reference_relative_loc'].fillna(-1)
-    # TODO
-    # df['imp_changed'] = df['imp_changed'].fillna(-1)
-    rank_cols = [i for i in df.columns if 'rank' in i]
-    df[rank_cols] = df[rank_cols].fillna(-1)
-    # fill all nan with zeros now
-    df.fillna(0, inplace=True)
+    # fillna
+    prev_cols = [i for i in df.columns if 'prev' in i]
+    df.loc[:, prev_cols] = df.loc[:, prev_cols].fillna(0)
 
-    price_bins_cols = [i for i in df.columns if 'bin' in i]
-    df[price_bins_cols] = df[price_bins_cols]/5
+    # some transformation
+    to_log_median_cols = ['last_duration', 'session_duration', 'session_size', 'n_imps',
+                          'mean_price', 'median_price', 'std_price', 'n_cfs',
+                          'step']
+    prev_cols = [i for i in df.columns if 'prev' in i]
+    to_log_median_cols.extend(prev_cols)
 
-    # ohe
-    # ohe_cols = ['last_action_type', 'fs', 'sort_order']
+    logger.info(f'Performing log_median columns on:\n{np.array(to_log_median_cols)}')
+    logger.warning('THIS PROBABLY WILL MAKE VALIDATION PERFORMANCE LOOK BETTER THAT IT ACTUALLY IS!!!')
+    for col in tqdm(to_log_median_cols):
+        log_median(df, col)
+
+    # specify columns for ohe-hot-encoding
     ohe_cols = ['last_action_type']
 
     for col in ohe_cols:
         logger.info(f'One hot: {col}')
-        print(df[col].head())
         df[col] = df[col].astype(int)
         n_unique = df[col].nunique()
         df[col] = df[col].apply(lambda v: np.eye(n_unique, dtype=int)[v][1:])
         expand(df, col)
+
+    logger.info(f'COLUMNS:\n{list(df.columns)}')
 
     filename = 'train_inputs_xgb.snappy'
     df.to_parquet(os.path.join(Filepath.cache_path, filename), index=False)

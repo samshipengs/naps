@@ -7,6 +7,7 @@ import numpy as np
 from datetime import datetime as dt
 from ast import literal_eval
 
+from tqdm import tqdm
 from sklearn.model_selection import KFold, ShuffleSplit
 import catboost as cat
 
@@ -23,29 +24,42 @@ RS = 42
 # catboost GPU does not support custom metric
 
 
-# def cat_preprocess(df):
-#     log_transform_cols = ['last_duration', 'session_duration', 'step', 'mean_price', 'median_price']
-#     logger.info(f'Log1p transforming {log_transform_cols}')
-#     for c in log_transform_cols:
-#         df[c] = np.log1p(df[c])
+def log_median(df, col):
+    df[col] = np.log((1+df[col])/(1+np.median(df[col])))
 
 
 def cat_preprocess(df):
     # specify some columns that we do not want in training
     cf_cols = [i for i in df.columns if 'current_filters' in i]
     price_cols = [i for i in df.columns if re.match(r'prices_\d', i)]
-    prev_cols = [i for i in df.columns if 'prev' in i]
-    drop_cols = cf_cols + price_cols + ['country', 'platform']
-    drop_cols = [col for col in df.columns if col in drop_cols]
 
-    # drop cols
-    logger.info(f'Drop columns:\n {drop_cols}')
+    drop_cols = cf_cols + price_cols + ['country', 'platform', 'impressions_str']
+    drop_cols = [col for col in df.columns if col in drop_cols]
+    # drop col
+    logger.info(f'Preliminary Drop columns:\n {drop_cols}')
     df.drop(drop_cols, axis=1, inplace=True)
 
-    log_transform_cols = ['last_duration', 'session_duration', 'step', 'mean_price', 'median_price']
-    for col in log_transform_cols:
-        logger.info(f'Log1p transforming {col}')
-        df[col] = np.log1p(df[col])
+    # fillna
+    prev_cols = [i for i in df.columns if 'prev' in i]
+    df.loc[:, prev_cols] = df.loc[:, prev_cols].fillna(0)
+
+    # some transformation
+    to_log_median_cols = ['last_duration', 'session_duration', 'session_size', 'n_imps',
+                          'mean_price', 'median_price', 'std_price', 'n_cfs',
+                          'step', 'step_no_gap']
+    prev_cols = [i for i in df.columns if 'prev' in i]
+    to_log_median_cols.extend(prev_cols)
+
+    logger.info(f'Performing log_median columns on:\n{np.array(to_log_median_cols)}')
+    logger.warning('THIS PROBABLY WILL MAKE VALIDATION PERFORMANCE LOOK BETTER THAT IT ACTUALLY IS!!!')
+    for col in tqdm(to_log_median_cols):
+        log_median(df, col)
+
+    # price_bins_cols = [i for i in df.columns if 'bin' in i]
+    # df[price_bins_cols] = df[price_bins_cols]/5
+
+    logger.info(f'COLUMNS:\n{list(df.columns)}')
+
     filename = 'train_inputs_cat.snappy'
     df.to_parquet(os.path.join(Filepath.cache_path, filename), index=False)
     return df

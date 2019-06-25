@@ -9,6 +9,7 @@ from functools import partial
 from datetime import datetime as dt
 from ast import literal_eval
 
+from tqdm import tqdm
 from skopt import gp_minimize
 from skopt.space import Real, Categorical, Integer
 from skopt.plots import plot_convergence
@@ -42,25 +43,42 @@ def lgb_mrr(y_preds, train_data):
     return 'mrr', np.mean(1 / (pred_label + 1)), True
 
 
+def log_median(df, col):
+    df[col] = np.log((1+df[col])/(1+np.median(df[col])))
+
+
 def lgb_preprocess(df):
     # specify some columns that we do not want in training
     cf_cols = [i for i in df.columns if 'current_filters' in i]
     price_cols = [i for i in df.columns if re.match(r'prices_\d', i)]
-    drop_cols = cf_cols + price_cols + ['country', 'platform']
-    drop_cols = [col for col in df.columns if col in drop_cols]
 
-    # drop cols
-    logger.info(f'Drop columns:\n {drop_cols}')
+    drop_cols = cf_cols + price_cols + ['country', 'platform', 'impressions_str']
+    drop_cols = [col for col in df.columns if col in drop_cols]
+    # drop col
+    logger.info(f'Preliminary Drop columns:\n {drop_cols}')
     df.drop(drop_cols, axis=1, inplace=True)
 
     # fillna
     prev_cols = [i for i in df.columns if 'prev' in i]
     df.loc[:, prev_cols] = df.loc[:, prev_cols].fillna(0)
 
-    log_transform_cols = ['last_duration', 'session_duration', 'step', 'mean_price', 'median_price']
-    for col in log_transform_cols:
-        logger.info(f'Log1p transforming {col}')
-        df[col] = np.log1p(df[col])
+    # some transformation
+    to_log_median_cols = ['last_duration', 'session_duration', 'session_size', 'n_imps',
+                          'mean_price', 'median_price', 'std_price', 'n_cfs',
+                          'step', 'step_no_gap']
+    prev_cols = [i for i in df.columns if 'prev' in i]
+    to_log_median_cols.extend(prev_cols)
+
+    logger.info(f'Performing log_median columns on:\n{np.array(to_log_median_cols)}')
+    logger.warning('THIS PROBABLY WILL MAKE VALIDATION PERFORMANCE LOOK BETTER THAT IT ACTUALLY IS!!!')
+    for col in tqdm(to_log_median_cols):
+        log_median(df, col)
+
+    # price_bins_cols = [i for i in df.columns if 'bin' in i]
+    # df[price_bins_cols] = df[price_bins_cols]/5
+
+    logger.info(f'COLUMNS:\n{list(df.columns)}')
+
     filename = 'train_inputs_lgb.snappy'
     df.to_parquet(os.path.join(Filepath.cache_path, filename), index=False)
     df['impressions_str'] = df['impressions_str'].str.split('|')
@@ -302,7 +320,7 @@ def lgb_tuning(xtrain, base_params, n_searches=200):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 5000000,
+    setup = {'nrows': 1000000,
              'tuning': False,
              'recompute_train': False,
              'add_test': False,

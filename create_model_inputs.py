@@ -196,8 +196,8 @@ def compute_session_func(grp):
     # prev_interact_df = df_temp[interact_cols].shift(1).cumsum()
 
     # 1) multiply one hots with the step number
-    prev_click_df = df_temp[click_cols].mul(df_temp['step'], axis=0)
-    prev_interact_df = df_temp[interact_cols].mul(df_temp['step'], axis=0)
+    prev_click_df = df_temp[click_cols].mul(df_temp['step_no_gap'], axis=0)
+    prev_interact_df = df_temp[interact_cols].mul(df_temp['step_no_gap'], axis=0)
     # 2) replace zero with nan
     prev_click_df.replace(0, np.nan, inplace=True)
     prev_interact_df.replace(0, np.nan, inplace=True)
@@ -208,8 +208,8 @@ def compute_session_func(grp):
     prev_click_df = prev_click_df.shift(1)
     prev_interact_df = prev_interact_df.shift(1)
     # 5) subtract by step
-    prev_click_df = -prev_click_df.sub(df_temp['step'], axis=0)
-    prev_interact_df = -prev_interact_df.sub(df_temp['step'], axis=0)
+    prev_click_df = -prev_click_df.sub(df_temp['step_no_gap'], axis=0)
+    prev_interact_df = -prev_interact_df.sub(df_temp['step_no_gap'], axis=0)
 
     # remove the original click and interact cols, swap on the last and prev clicks and interaction cols
     df.drop(click_cols + interact_cols, axis=1, inplace=True)

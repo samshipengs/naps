@@ -11,7 +11,7 @@ Filepath = get_data_path()
 
 # USE_COLS = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters', 'reference', 'impressions', 'prices',
 #             'country', 'device', 'platform']
-USE_COLS = ['session_id', 'timestamp', 'step', 'action_type', 'current_filters',
+USE_COLS = ['session_id', 'timestamp', 'step', 'step_no_gap', 'action_type', 'current_filters',
             'reference', 'impressions', 'prices', 'country', 'device', 'platform']
 
 
@@ -58,6 +58,10 @@ def remove_duplicates(df):
     df = df[~select_mask].reset_index(drop=True)
     df.drop([f'last_{c}' for c in unique_identifiers], axis=1, inplace=True)
     logger.info(f'After dropping duplicates df shape: ({df.shape[0]:,}, {df.shape[1]})')
+
+    logger.info('Add additional column step_no_gap')
+    df['step_no_gap'] = df.groupby('session_id')['session_id'].transform(lambda s: list(range(1, len(s) + 1)))
+    logger.info('Done removing duplicates')
     return df
 
 

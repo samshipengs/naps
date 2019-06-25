@@ -18,7 +18,7 @@ from keras.utils import plot_model
 from keras.models import load_model
 import tensorflow as tf
 
-from model import build_model, multimodal_model
+from model import build_model
 from clr_callback import CyclicLR
 from create_model_inputs import create_model_inputs, expand
 from utils import get_logger, get_data_path
@@ -69,7 +69,7 @@ def bpr_max_loss(l2=True, weight=1.):
 custom_objective = bpr_max_loss(l2=True, weight=1.)
 
 
-def iterate_minibatches(input_price, input_prev, input_star, input_rating, input_rest, targets, batch_size, shuffle=True):
+def iterate_minibatches(input_x, targets, batch_size, shuffle=True):
     indices = np.arange(len(targets))
     while True:
         if shuffle:
@@ -82,14 +82,9 @@ def iterate_minibatches(input_price, input_prev, input_star, input_rating, input
             else:
                 excerpt = indices[start_idx:start_idx + batch_size]
 
-            batch_price = input_price[excerpt]
-            batch_prev = input_prev[excerpt]
-            batch_star = input_star[excerpt]
-            batch_rating = input_rating[excerpt]
-            batch_rest = input_rest[excerpt]
-
+            input_batch = input_x[excerpt]
             targets_batch = targets[excerpt]
-            yield ([batch_price, batch_prev, batch_star, batch_rating, batch_rest], targets_batch)
+            yield (input_batch, targets_batch)
 
 
 def log_median(df, col):
@@ -163,15 +158,8 @@ def train(train_df, params, only_last=False, retrain=False):
 
     kf = ShuffleSplit(n_splits=5, test_size=0.15, random_state=RS)
 
-    # a bit prep-processing
+    # a bit prep-rocessing
     train_df = nn_prep(train_df)
-
-    # get different modal
-    price_cols = [i for i in train_df.columns if 'price' in i]
-    prev_cols = [i for i in train_df if 'prev' in i]
-    star_cols = [i for i in train_df if 'star' in i]
-    rating_cols = [i for i in train_df if 'rating' in i]
-    rest_cols = [i for i in train_df if i not in price_cols + prev_cols + star_cols + rating_cols]
 
     batch_size = params['batch_size']
     n_epochs = params['n_epochs']
@@ -197,24 +185,11 @@ def train(train_df, params, only_last=False, retrain=False):
         x_val.drop(['session_id', 'target'], axis=1, inplace=True)
 
         # data generator
+        # train_gen = iterate_mini-batches(trn_num, trn_price, trn_click, y_trn, batch_size, shuffle=True)
         y_trn_binary = to_categorical(y_trn)
         y_val_binary = to_categorical(y_val)
-        # train_gen = iterate_minibatches(x_trn.values, y_trn_binary, batch_size, shuffle=True)
-        # val_gen = iterate_minibatches(x_val.values, y_val_binary, batch_size, shuffle=False)
-
-        train_gen = iterate_minibatches(x_trn[price_cols].values,
-                                        x_trn[prev_cols].values,
-                                        x_trn[star_cols],
-                                        x_trn[rating_cols],
-                                        x_trn[rest_cols],
-                                        y_trn_binary, batch_size, shuffle=True)
-
-        val_gen = iterate_minibatches(x_val[price_cols].values,
-                                      x_val[prev_cols].values,
-                                      x_val[star_cols],
-                                      x_val[rating_cols],
-                                      x_val[rest_cols],
-                                      y_val_binary, batch_size, shuffle=True)
+        train_gen = iterate_minibatches(x_trn.values, y_trn_binary, batch_size, shuffle=True)
+        val_gen = iterate_minibatches(x_val.values, y_val_binary, batch_size, shuffle=False)
 
         # =====================================================================================
         # create model
@@ -223,9 +198,7 @@ def train(train_df, params, only_last=False, retrain=False):
             logger.info(f"Loading model from existing '{model_filename}'")
             model = load_model(model_filename)
         else:
-            # model = build_model(input_dim=x_trn.shape[1])
-            model = multimodal_model(price_dim=len(price_cols), prev_dim=len(prev_cols), star_dim=len(star_cols),
-                                     rating_dim=len(rating_cols), rest_dim=len(rest_cols))
+            model = build_model(input_dim=x_trn.shape[1])
             nparams = model.count_params()
             opt = optimizers.Adam(lr=params['learning_rate'])
             # model.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=['accuracy'])

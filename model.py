@@ -26,6 +26,40 @@ def build_model(input_dim, dense_act='relu', kernel_initializer='glorot_uniform'
     return model
 
 
+def multimodal_model(price_dim, prev_dim, star_dim, rating_dim, rest_dim):
+    # batch_price, batch_prev, batch_star, batch_rating, batch_rest
+    price_input = Input(shape=(price_dim, ), name='price_input')
+    price_dense = Dense(16, activation='relu')(price_input)
+    price_dense = Dense(8, activation='relu')(price_dense)
+
+    prev_input = Input(shape=(prev_dim, ), name='prev_input')
+    prev_dense = Dense(32, activation='relu')(prev_input)
+    prev_dense = Dense(16, activation='relu')(prev_dense)
+
+    star_input = Input(shape=(star_dim, ), name='star_input')
+    star_dense = Dense(16, activation='relu')(star_input)
+    star_dense = Dense(8, activation='relu')(star_dense)
+
+    rating_input = Input(shape=(rating_dim, ), name='rating_input')
+    rating_dense = Dense(64, activation='relu')(rating_input)
+    rating_dense = Dense(64, activation='relu')(rating_dense)
+
+    rest_input = Input(shape=(rest_dim, ), name='price_input')
+    rest_dense = Dense(32, activation='relu')(rest_input)
+
+    early_fusion = concatenate([price_input, prev_input, star_input, rating_input, rest_input])
+    early_fusion = Dense(32, activation='relu')(early_fusion)
+
+    late_fusion = concatenate([price_dense, prev_dense, star_dense, rating_dense, rest_dense, early_fusion])
+    late_fusion = Dense(32, activation='relu')(late_fusion)
+
+    output_layer = Dense(25, activation='linear')(late_fusion)
+
+    model = Model(inputs=[price_input, prev_input, star_input, rating_input, rest_input],
+                  outputs=output_layer)
+    return model
+
+
 def build_ensemble(dense_act='relu'):
     K.clear_session()
     # build model =====================================================================================

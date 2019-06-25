@@ -74,11 +74,43 @@ def lgb_preprocess(df):
     for col in tqdm(to_log_median_cols):
         log_median(df, col)
 
+    # price_bins_cols = [i for i in df.columns if 'bin' in i]
+    # df[price_bins_cols] = df[price_bins_cols]/5
+
     logger.info(f'COLUMNS:\n{list(df.columns)}')
 
     filename = 'train_inputs_lgb.snappy'
     df.to_parquet(os.path.join(Filepath.cache_path, filename), index=False)
+    df['impressions_str'] = df['impressions_str'].str.split('|')
     return df
+
+
+def ratios(train_sids, smoothing_weight=10):
+    logger.info('Adding ratios')
+    df = preprocess_data('train', nrows=1000000, add_test=False, recompute=False)
+    df = df[df['session_id'].isin(train_sids)]
+    impressions = df['impressions'].dropna().str.split('|').values
+    impressions = [j for i in impressions for j in i]
+    imp_ctn = pd.value_counts(impressions)
+
+    clickouts = df[df['action_type'] == 0]['reference'].dropna().values
+    clickouts_ctn = pd.value_counts(clickouts)
+    # interacts = df[df.action_type.isin(['search for item', 'interaction item image', 'interaction item info',
+    #                                     'interaction item deals', 'interaction item rating'])].reference.dropna().values
+    interacts = df[df.action_type.isin([3, 4, 5, 6, 7])]['reference'].dropna().values
+    interacts_ctn = pd.value_counts(interacts)
+#     print(clickouts_ctn.head())
+    ctr = clickouts_ctn/imp_ctn #.round(2)
+    # itr = (interacts_ctn/imp_ctn).round(2)
+    # return ctr, itr
+    # add smoothing
+    global_mean = np.mean(ctr)
+    smoothed_ctr = (clickouts_ctn + smoothing_weight*global_mean)/(imp_ctn + smoothing_weight)
+    smoothed_ctr.index = smoothed_ctr.index.astype(str)
+    smoothed_ctr.to_csv('temp.csv')
+    mapping = smoothed_ctr.to_dict()
+
+    return mapping
 
 
 def train(train_df, train_params, n_fold=5, test_fraction=0.15, only_last=False, feature_importance=True,
@@ -121,17 +153,30 @@ def train(train_df, train_params, n_fold=5, test_fraction=0.15, only_last=False,
         x_trn, x_val = (train_df[trn_mask].reset_index(drop=True),
                         train_df[~trn_mask].reset_index(drop=True))
 
+        # target encode impressions
+        ratio_mapping = ratios(trn_ids, smoothing_weight=500)
+        items = ratio_mapping.keys()
+        x_trn['ctr'] = x_trn['impressions_str'].apply(lambda imps: [ratio_mapping[imp] if imp in items else np.nan for imp in imps])
+        x_val['ctr'] = x_val['impressions_str'].apply(lambda imps: [ratio_mapping[imp] if imp in items else np.nan for imp in imps])
+        # pad
+        x_trn = padding(x_trn, x_trn['impressions_str'].str.len() < 25, ['ctr'], 25, np.nan)
+        x_val = padding(x_val, x_val['impressions_str'].str.len() < 25, ['ctr'], 25, np.nan)
+        # expand to columns
+        expand(x_trn, 'ctr')
+        expand(x_val, 'ctr')
+
         # for validation only last row is needed
         x_val = x_val.groupby('session_id').last().reset_index(drop=False)
 
         # get target
         y_trn, y_val = x_trn['target'].values, x_val['target'].values
-        x_trn.drop(['session_id', 'target'], axis=1, inplace=True)
-        x_val.drop(['session_id', 'target'], axis=1, inplace=True)
+        x_trn.drop(['session_id', 'target', 'impressions_str'], axis=1, inplace=True)
+        x_val.drop(['session_id', 'target', 'impressions_str'], axis=1, inplace=True)
 
         # get categorical index
         cat_ind = [ind for ind, col_name in enumerate(x_trn.columns) if col_name in CATEGORICAL_COLUMNS]
         # =====================================================================================
+
         lgb_trn_data = lgb.Dataset(x_trn, label=y_trn, free_raw_data=False)
         lgb_val_data = lgb.Dataset(x_val, label=y_val, free_raw_data=False)
         # =====================================================================================
@@ -141,28 +186,28 @@ def train(train_df, train_params, n_fold=5, test_fraction=0.15, only_last=False,
         if os.path.isfile(model_filename) and not retrain:
             logger.info(f"Loading model from existing '{model_filename}'")
             # parameters not required.
-            booster = lgb.Booster(model_file=model_filename)
+            clf = lgb.Booster(model_file=model_filename)
         else:
             # train model
-            booster = lgb.train(train_params,
-                                lgb_trn_data,
-                                valid_sets=[lgb_trn_data, lgb_val_data],
-                                valid_names=['train', 'val'],
-                                categorical_feature=cat_ind,
-                                feval=lgb_mrr,
-                                # init_model=lgb.Booster(model_file=model_filename),
-                                verbose_eval=100)
+            clf = lgb.train(train_params,
+                            lgb_trn_data,
+                            valid_sets=[lgb_trn_data, lgb_val_data],
+                            valid_names=['train', 'val'],
+                            categorical_feature=cat_ind,
+                            feval=lgb_mrr,
+                            # init_model=lgb.Booster(model_file=model_filename),
+                            verbose_eval=100)
             if feature_importance:
                 logger.info('Compute feature importance')
                 # grab feature importance
                 imp_df = pd.DataFrame()
-                imp_df['feature_importance'] = booster.feature_importance(importance_type='gain',
-                                                                          iteration=booster.best_iteration)
+                imp_df['feature_importance'] = clf.feature_importance(importance_type='gain',
+                                                                      iteration=clf.best_iteration)
                 imp_df['features'] = x_trn.columns
                 plot_imp_lgb(imp_df, f'lgb_{last}_{fold}')
-                compute_shap_multi_class(booster, x_val, x_val.columns, f'lgb_shap_{last}_{fold}')
+                compute_shap_multi_class(clf, x_val, x_val.columns, f'lgb_shap_{last}_{fold}')
 
-            booster.save_model(model_filename)
+            clf.save_model(model_filename)
 
         # make prediction
         x_trn = train_df[trn_mask].reset_index(drop=True)
@@ -170,17 +215,17 @@ def train(train_df, train_params, n_fold=5, test_fraction=0.15, only_last=False,
         y_trn = x_trn['target'].values
         x_trn.drop(['session_id', 'target'], axis=1, inplace=True)
 
-        trn_pred = booster.predict(x_trn)
+        trn_pred = clf.predict(x_trn)
         trn_mrr = compute_mrr(trn_pred, y_trn)
         np.save(os.path.join(model_path, f'lgb_trn_{fold}_pred.npy'), trn_pred)
 
-        val_pred = booster.predict(x_val)
+        val_pred = clf.predict(x_val)
         val_mrr = compute_mrr(val_pred, y_val)
         np.save(os.path.join(model_path, f'lgb_val_{fold}_pred.npy'), val_pred)
 
         logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')
 
-        classifiers.append(booster)
+        classifiers.append(clf)
         cv_mrrs.append((trn_mrr, val_mrr))
 
         if verbose:
@@ -286,7 +331,7 @@ if __name__ == '__main__':
     base_params = {'boosting': 'gbdt',  # gbdt, dart, goss
                    'num_boost_round': 5000,
                    'learning_rate': 0.02,
-                   'early_stopping_rounds': 100,
+                   'early_stopping_rounds': 500,
                    'num_class': 25,
                    'objective': 'multiclass',
                    'metric': ['multi_logloss'],

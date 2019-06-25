@@ -384,8 +384,8 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         df.loc[sort_mask, 'sort_order'] = df.loc[sort_mask, 'reference'].map(change_sort_order_mapper)
 
         # TODO
-        # # add impression change indicator
-        # df = different_impressions(df)
+        # add impression change indicator
+        df = different_impressions(df)
 
         # process impressions
         df['impressions'] = df['impressions'].str.split('|')

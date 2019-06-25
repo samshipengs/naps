@@ -268,7 +268,7 @@ def train(train_df, params, only_last=False, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 1000000,
+    setup = {'nrows': 5000000,
              'recompute_train': False,
              'add_test': False,
              'only_last': False,

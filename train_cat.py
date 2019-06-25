@@ -23,40 +23,54 @@ RS = 42
 # catboost GPU does not support custom metric
 
 
+# def cat_preprocess(df):
+#     log_transform_cols = ['last_duration', 'session_duration', 'step', 'mean_price', 'median_price']
+#     logger.info(f'Log1p transforming {log_transform_cols}')
+#     for c in log_transform_cols:
+#         df[c] = np.log1p(df[c])
+
+
 def cat_preprocess(df):
+    # specify some columns that we do not want in training
+    cf_cols = [i for i in df.columns if 'current_filters' in i]
+    price_cols = [i for i in df.columns if re.match(r'prices_\d', i)]
+    prev_cols = [i for i in df.columns if 'prev' in i]
+    drop_cols = cf_cols + price_cols + ['country', 'platform']
+    drop_cols = [col for col in df.columns if col in drop_cols]
+
+    # drop cols
+    logger.info(f'Drop columns:\n {drop_cols}')
+    df.drop(drop_cols, axis=1, inplace=True)
+
     log_transform_cols = ['last_duration', 'session_duration', 'step', 'mean_price', 'median_price']
-    logger.info(f'Log1p transforming {log_transform_cols}')
-    for c in log_transform_cols:
-        df[c] = np.log1p(df[c])
+    for col in log_transform_cols:
+        logger.info(f'Log1p transforming {col}')
+        df[col] = np.log1p(df[col])
+    filename = 'train_inputs_cat.snappy'
+    df.to_parquet(os.path.join(Filepath.cache_path, filename), index=False)
+    return df
 
 
-def train(train_inputs, params, only_last=False, retrain=False):
+def train(train_df, train_params, only_last=False, retrain=False):
     # path to where model is saved
     model_path = Filepath.model_path
 
-    # specify some columns that we do not want in training
-    cf_cols = [i for i in train_inputs.columns if 'current_filters' in i]
-    price_cols = [i for i in train_inputs.columns if re.match(r'prices_\d', i)]
-    drop_cols = cf_cols + price_cols + ['country', 'platform']
-    # drop cf col for now
-    train_inputs.drop(drop_cols, axis=1, inplace=True)
-
-    # if only use the last row of train_inputs to train
+    # if only use the last row of train_df to train
     if only_last:
         logger.info('Training ONLY with last row')
-        train_inputs = train_inputs.groupby('session_id').last().reset_index(drop=False)
+        train_df = train_df.groupby('session_id').last().reset_index(drop=False)
 
     # a bit processing
-    cat_preprocess(train_inputs)
+    cat_preprocess(train_df)
 
-    train_cols = train_inputs.columns
+    train_cols = train_df.columns
     logger.info(f'Columns used for training: {train_cols.values}')
     used_categorical_cols = train_cols[train_cols.isin(CATEGORICAL_COLUMNS)]
     logger.info(f'Categorical columns in training: {used_categorical_cols.values}')
 
-    # grab unique session ids and use this to split, so that train_inputs with same session_id do not spread to both
+    # grab unique session ids and use this to split, so that train_df with same session_id do not spread to both
     # train and valid
-    unique_session_ids = train_inputs['session_id'].unique()
+    unique_session_ids = train_df['session_id'].unique()
 
     # kf = KFold(n_splits=5, shuffle=True, random_state=RS)
     ss = ShuffleSplit(n_splits=5, test_size=0.15, random_state=RS)
@@ -69,11 +83,11 @@ def train(train_inputs, params, only_last=False, retrain=False):
         logger.info(f'Training fold {fold}: train ids len={len(trn_ind):,} | val ids len={len(val_ind):,}')
         # get session_id used for train
         trn_ids = unique_session_ids[trn_ind]
-        trn_mask = train_inputs['session_id'].isin(trn_ids)
+        trn_mask = train_df['session_id'].isin(trn_ids)
         logger.info(f'Training fold {fold}: train len={trn_mask.sum():,} | val len={(~trn_mask).sum():,}')
 
-        x_trn, x_val = (train_inputs[trn_mask].reset_index(drop=True),
-                        train_inputs[~trn_mask].reset_index(drop=True))
+        x_trn, x_val = (train_df[trn_mask].reset_index(drop=True),
+                        train_df[~trn_mask].reset_index(drop=True))
 
         # for validation only last row is needed
         x_val = x_val.groupby('session_id').last().reset_index(drop=False)
@@ -95,7 +109,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
             clf.load_model(model_filename)
         else:
             # train model
-            clf = cat.CatBoostClassifier(**params)
+            clf = cat.CatBoostClassifier(**train_params)
             clf.fit(x_trn, y_trn,
                     cat_features=cat_ind,
                     eval_set=(x_val, y_val),
@@ -115,7 +129,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
             clf.save_model(model_filename)
 
         # make prediction
-        x_trn = train_inputs[trn_mask].reset_index(drop=True)
+        x_trn = train_df[trn_mask].reset_index(drop=True)
         x_trn = x_trn.groupby('session_id').last().reset_index(drop=False)
         y_trn = x_trn['target'].values
         x_trn.drop(['session_id', 'target'], axis=1, inplace=True)
@@ -145,7 +159,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 5000000,
+    setup = {'nrows': 1000000,
              'recompute_train': False,
              'add_test': False,
              'only_last': False,
@@ -190,7 +204,7 @@ if __name__ == '__main__':
     train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], padding_value=np.nan,
                                        add_test=setup['add_test'], recompute=setup['recompute_train'])
     # train the model
-    models, mrrs = train(train_inputs, params=params, only_last=setup['only_last'], retrain=setup['retrain'])
+    models, mrrs = train(train_inputs, train_params=params, only_last=setup['only_last'], retrain=setup['retrain'])
     train_mrr = np.mean([mrr[0] for mrr in mrrs])
     val_mrr = np.mean([mrr[1] for mrr in mrrs])
     # get the test inputs

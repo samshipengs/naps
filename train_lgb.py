@@ -16,9 +16,10 @@ from skopt.utils import use_named_args
 from sklearn.model_selection import KFold, ShuffleSplit
 import lightgbm as lgb
 
-from create_model_inputs import create_model_inputs, CATEGORICAL_COLUMNS
-from utils import get_logger, get_data_path, check_gpu, ignore_warnings
+from create_model_inputs import create_model_inputs, CATEGORICAL_COLUMNS, expand, padding
+from utils import get_logger, get_data_path, check_gpu, ignore_warnings, load_data
 from plots import plot_hist, confusion_matrix, plot_imp_lgb, compute_shap_multi_class
+from preprocessing import preprocess_data
 
 # ignore_warnings()
 
@@ -45,13 +46,16 @@ def lgb_preprocess(df):
     # specify some columns that we do not want in training
     cf_cols = [i for i in df.columns if 'current_filters' in i]
     price_cols = [i for i in df.columns if re.match(r'prices_\d', i)]
-    prev_cols = [i for i in df.columns if 'prev' in i]
-    drop_cols = cf_cols + price_cols + prev_cols # + ['country', 'platform']
+    drop_cols = cf_cols + price_cols + ['country', 'platform']
     drop_cols = [col for col in df.columns if col in drop_cols]
 
     # drop cols
     logger.info(f'Drop columns:\n {drop_cols}')
     df.drop(drop_cols, axis=1, inplace=True)
+
+    # fillna
+    prev_cols = [i for i in df.columns if 'prev' in i]
+    df.loc[:, prev_cols] = df.loc[:, prev_cols].fillna(0)
 
     log_transform_cols = ['last_duration', 'session_duration', 'step', 'mean_price', 'median_price']
     for col in log_transform_cols:
@@ -59,7 +63,36 @@ def lgb_preprocess(df):
         df[col] = np.log1p(df[col])
     filename = 'train_inputs_lgb.snappy'
     df.to_parquet(os.path.join(Filepath.cache_path, filename), index=False)
+    df['impressions_str'] = df['impressions_str'].str.split('|')
     return df
+
+
+def ratios(train_sids, smoothing_weight=10):
+    logger.info('Adding ratios')
+    df = preprocess_data('train', nrows=1000000, add_test=False, recompute=False)
+    df = df[df['session_id'].isin(train_sids)]
+    impressions = df['impressions'].dropna().str.split('|').values
+    impressions = [j for i in impressions for j in i]
+    imp_ctn = pd.value_counts(impressions)
+
+    clickouts = df[df['action_type'] == 0]['reference'].dropna().values
+    clickouts_ctn = pd.value_counts(clickouts)
+    # interacts = df[df.action_type.isin(['search for item', 'interaction item image', 'interaction item info',
+    #                                     'interaction item deals', 'interaction item rating'])].reference.dropna().values
+    interacts = df[df.action_type.isin([3, 4, 5, 6, 7])]['reference'].dropna().values
+    interacts_ctn = pd.value_counts(interacts)
+#     print(clickouts_ctn.head())
+    ctr = clickouts_ctn/imp_ctn #.round(2)
+    # itr = (interacts_ctn/imp_ctn).round(2)
+    # return ctr, itr
+    # add smoothing
+    global_mean = np.mean(ctr)
+    smoothed_ctr = (clickouts_ctn + smoothing_weight*global_mean)/(imp_ctn + smoothing_weight)
+    smoothed_ctr.index = smoothed_ctr.index.astype(str)
+    smoothed_ctr.to_csv('temp.csv')
+    mapping = smoothed_ctr.to_dict()
+
+    return mapping
 
 
 def train(train_df, train_params, n_fold=5, test_fraction=0.15, only_last=False, feature_importance=True,
@@ -102,13 +135,25 @@ def train(train_df, train_params, n_fold=5, test_fraction=0.15, only_last=False,
         x_trn, x_val = (train_df[trn_mask].reset_index(drop=True),
                         train_df[~trn_mask].reset_index(drop=True))
 
+        # target encode impressions
+        ratio_mapping = ratios(trn_ids, smoothing_weight=500)
+        items = ratio_mapping.keys()
+        x_trn['ctr'] = x_trn['impressions_str'].apply(lambda imps: [ratio_mapping[imp] if imp in items else np.nan for imp in imps])
+        x_val['ctr'] = x_val['impressions_str'].apply(lambda imps: [ratio_mapping[imp] if imp in items else np.nan for imp in imps])
+        # pad
+        x_trn = padding(x_trn, x_trn['impressions_str'].str.len() < 25, ['ctr'], 25, np.nan)
+        x_val = padding(x_val, x_val['impressions_str'].str.len() < 25, ['ctr'], 25, np.nan)
+        # expand to columns
+        expand(x_trn, 'ctr')
+        expand(x_val, 'ctr')
+
         # for validation only last row is needed
         x_val = x_val.groupby('session_id').last().reset_index(drop=False)
 
         # get target
         y_trn, y_val = x_trn['target'].values, x_val['target'].values
-        x_trn.drop(['session_id', 'target'], axis=1, inplace=True)
-        x_val.drop(['session_id', 'target'], axis=1, inplace=True)
+        x_trn.drop(['session_id', 'target', 'impressions_str'], axis=1, inplace=True)
+        x_val.drop(['session_id', 'target', 'impressions_str'], axis=1, inplace=True)
 
         # get categorical index
         cat_ind = [ind for ind, col_name in enumerate(x_trn.columns) if col_name in CATEGORICAL_COLUMNS]
@@ -131,7 +176,7 @@ def train(train_df, train_params, n_fold=5, test_fraction=0.15, only_last=False,
                             valid_sets=[lgb_trn_data, lgb_val_data],
                             valid_names=['train', 'val'],
                             categorical_feature=cat_ind,
-                            # feval=lgb_mrr,
+                            feval=lgb_mrr,
                             # init_model=lgb.Booster(model_file=model_filename),
                             verbose_eval=100)
             if feature_importance:
@@ -266,9 +311,9 @@ if __name__ == '__main__':
              'recompute_test': True}
 
     base_params = {'boosting': 'gbdt',  # gbdt, dart, goss
-                   'num_boost_round': 1000,
-                   'learning_rate': 0.01,
-                   'early_stopping_rounds': 100,
+                   'num_boost_round': 5000,
+                   'learning_rate': 0.02,
+                   'early_stopping_rounds': 500,
                    'num_class': 25,
                    'objective': 'multiclass',
                    'metric': ['multi_logloss'],
@@ -277,8 +322,8 @@ if __name__ == '__main__':
                    }
 
     params = {'max_depth': 5,
-              'num_leaves': 10,
-              'feature_fraction': 0.9,
+              'num_leaves': 5,
+              'feature_fraction': 0.4,
               }
 
     if base_params['boosting'] != 'goss':

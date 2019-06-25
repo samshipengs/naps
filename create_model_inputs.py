@@ -30,7 +30,7 @@ def meta_encoding(recompute=False):
         properties = list(set(np.concatenate(meta['properties'].values)))
         property_mapping = {v: k for k, v in enumerate(properties)}
         property_names = list(property_mapping.keys())
-        meta['properties'] = meta['properties'].apply(lambda l: [property_mapping[i] for i in l])
+        meta['properties'] = meta['properties'].apply(lambda l: [property_mapping[p] for p in l])
         # create zeros for encoding first
         zeros = np.zeros((len(meta), len(property_mapping.keys())), dtype=int)
         # then assign
@@ -158,9 +158,9 @@ def compute_session_func(grp):
     if len(df) == 0:
         df['session_duration'] = np.nan
 
-    # get successive time difference
+    # get consecutive time difference
     df['last_duration'] = df['timestamp'].diff().dt.total_seconds()
-    # maybe we dont fillna with 0 as it could be implying a very short time interval
+    # maybe we don't fill na with 0 as it could be implying a very short time interval
     df.drop('timestamp', axis=1, inplace=True)
 
     # instead of ohe, just use it as categorical input
@@ -175,12 +175,12 @@ def compute_session_func(grp):
     temp_mapping = {v: k for k, v in enumerate(unique_items)}
     df['reference_natural'] = df['reference'].map(temp_mapping)
     click_out_mask = df['action_type'] == 0  # 0 is the hard-coded encoding for clickout item
-    df.drop('action_type', axis=1, inplace=True)
+    # df.drop('action_type', axis=1, inplace=True)
     other_mask = ~click_out_mask
     click_cols = [f'click_{i}' for i in range(len(unique_items))]
     interact_cols = [f'interact_{i}' for i in range(len(unique_items))]
 
-    # create clickout binary encoded dataframe
+    # create click out binary encoded dataframe
     click_df = pd.DataFrame(np.eye(len(unique_items), dtype=int)[df[click_out_mask]['reference_natural'].values],
                             columns=click_cols, index=df[click_out_mask].index)
     # create everything else except clickout
@@ -191,17 +191,38 @@ def compute_session_func(grp):
 
     # first get all previous clicks, and others
     df_temp = df.copy()
-    df_temp.fillna(0, inplace=True)  # we need to fillna otherwise the cumsum would not compute on row with nan value
-    prev_click_df = df_temp[click_cols].shift(1).cumsum()
-    prev_interact_df = df_temp[interact_cols].shift(1).cumsum()
-    
+    df_temp.fillna(0, inplace=True)  # we need to fill na otherwise the cumsum would not compute on row with nan value
+    # prev_click_df = df_temp[click_cols].shift(1).cumsum()
+    # prev_interact_df = df_temp[interact_cols].shift(1).cumsum()
+
+    # 1) multiply one hots with the step number
+    prev_click_df = df_temp[click_cols].mul(df_temp['step'], axis=0)
+    prev_interact_df = df_temp[interact_cols].mul(df_temp['step'], axis=0)
+    # 2) replace zero with nan
+    prev_click_df.replace(0, np.nan, inplace=True)
+    prev_interact_df.replace(0, np.nan, inplace=True)
+    # 3) forward fill
+    prev_click_df.fillna(method='ffill', inplace=True)
+    prev_interact_df.fillna(method='ffill', inplace=True)
+    # 4) shift row by 1
+    prev_click_df = prev_click_df.shift(1)
+    prev_interact_df = prev_interact_df.shift(1)
+    # 5) subtract by step
+    prev_click_df = -prev_click_df.sub(df_temp['step'], axis=0)
+    prev_interact_df = -prev_interact_df.sub(df_temp['step'], axis=0)
+
     # remove the original click and interact cols, swap on the last and prev clicks and interaction cols
     df.drop(click_cols + interact_cols, axis=1, inplace=True)
     # concat all
     df = pd.concat([df, prev_click_df, prev_interact_df], axis=1)
 
     # add impression relative location
-    df['last_reference'] = df['reference'].shift(1)
+    df['last_reference'] = df['reference']  # .shift(1)
+    # although, we only look at the last integer reference
+    valid_reference = df['last_reference'].str.contains(r'^\d+$')
+    df.loc[~valid_reference, 'last_reference'] = np.nan
+    df['last_reference'] = df['last_reference'].shift(1)
+    df['last_reference'].fillna(method='ffill', inplace=True)
     df.loc[click_out_mask, 'last_reference_relative_loc'] = df.loc[click_out_mask].apply(find_relative_ref_loc, axis=1)
     df.drop('last_reference', axis=1, inplace=True)
 
@@ -222,18 +243,18 @@ def compute_session_func(grp):
     return df
 
 
-def compute_session(args):
+def compute_session(input_args):
     """
     Get assigned group ids (list of session ids) from multiprocessing and compute features using worker function with
     groupby
-    :param args: tuple,
+    :param input_args: tuple,
         gids: list of session_ids to work on
         df: the input dataframe (note: multiprocessing cannot share memory thus it makes copy of this df, which could
             result in memory issue)
     :return: dataframe: features, then later to be concatenated with results from other pools
     """
     # grab the args
-    gids, df = args
+    gids, df = input_args
     # selecting the assigned session ids and grouping on session level
     grps = (df[df['session_id'].isin(gids)]
             .reset_index(drop=True)
@@ -248,7 +269,6 @@ def compute_session_fts(df, nprocs=None):
     """
     Initialize feature calculation with multiprocessing
     :param df: input preprocessed dataframe
-    :param filename_base:
     :param nprocs: numer of processes to use, if None all cores minus one is used
     :return: dataframe: input dataframe to model
     """
@@ -313,7 +333,7 @@ def different_impressions(input_df):
     def _diff(df):
         df['imp_shift'] = df['impressions'].shift(1)
         df['imp_shift'] = df['imp_shift'].fillna(method='ffill')
-        df['imp_changed'] = (df['impressions'] != df['imp_shift'])#.astype(int)
+        df['imp_changed'] = (df['impressions'] != df['imp_shift'])  # .astype(int)
         # the imp_changed of first impression list is always nan
         first_imp = df['impressions'].notna()
         first_imp = first_imp[first_imp].index[0]
@@ -363,8 +383,9 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         df.loc[fs_mask, 'fs'] = df.loc[fs_mask, 'reference'].map(fs_mapper)
         df.loc[sort_mask, 'sort_order'] = df.loc[sort_mask, 'reference'].map(change_sort_order_mapper)
 
-        # add impression change indicator
-        df = different_impressions(df)
+        # TODO
+        # # add impression change indicator
+        # df = different_impressions(df)
 
         # process impressions
         df['impressions'] = df['impressions'].str.split('|')
@@ -395,17 +416,6 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         del meta_mapping
         gc.collect()
 
-        # def _map_rating(imps):
-        #     return [item_rating_mapping[i] if i in meta_items else np.nan for i in imps]
-        #
-        # def _map_star(imps):
-        #     return [item_star_mapping[i] if i in meta_items else np.nan for i in imps]
-        #
-        # logger.info('Start rating mapping')
-        # df['ratings'] = df['impressions'].apply(_map_rating)
-        # logger.info('Start star mapping')
-        # df['stars'] = df['impressions'].apply(_map_star)
-
         # instead of iterate over each element in row, try to explode and map then collapse
         logger.info('Start rating mapping by exploding first, map then collapse')
         n_nan_imps = df['impressions'].isna().sum()
@@ -420,7 +430,7 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         base['ratings'] = base['impressions'].map(item_rating_mapping)
         base['stars'] = base['impressions'].map(item_star_mapping)
         base.drop('impressions', axis=1, inplace=True)
-        del item_rating_mapping, item_star_mapping  #, meta_items
+        del item_rating_mapping, item_star_mapping  # , meta_items
         gc.collect()
         # collapse it back
         ratings = base.groupby(['session_id', 'step'])['ratings'].apply(list).reset_index()
@@ -456,6 +466,15 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         # add rating and star rank
         df['ratings'] = df['ratings'].apply(_rank_value)
         df['stars'] = df['stars'].apply(_rank_value)
+
+        # before padding we record the original impression impression str value
+        # not drop them for target encoding purposes
+        def ints2str(imps):
+            if type(imps) != list:
+                return np.nan
+            else:
+                return '|'.join([str(i) for i in imps])
+        df['impressions_str'] = df['impressions'].apply(ints2str)
 
         # padding
         df['n_imps'] = df['impressions'].str.len()
@@ -504,7 +523,8 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
             df['target'] = df.apply(assign_target, axis=1)
             logger.info('Remove the nan target, which comes from the ones whose reference id is not in impression list')
             nan_target = df['target'].isna()
-            logger.info(f'There are {nan_target.sum()} number of nan target (reference id is not present in impressions)')
+            logger.info(f'There are {nan_target.sum()} number of nan target '
+                        '(reference id is not present in impressions)')
             # drop the ones whose reference is not in the impression list
             df = df[~nan_target].reset_index(drop=True)
             df['target'] = df['target'].astype(int)
@@ -591,6 +611,7 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
 
         # drop columns that not needed
         drop_cols = ['impressions', 'reference']
+        # drop_cols = ['reference']
         df.drop(drop_cols, axis=1, inplace=True)
 
         # finally expand all column of list to columns

@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime as dt
 from ast import literal_eval
-
+from tqdm import tqdm
 from sklearn.model_selection import KFold, ShuffleSplit
 from keras import backend as K
 from keras.utils import to_categorical
@@ -28,13 +28,29 @@ Filepath = get_data_path()
 RS = 42
 
 
-def custom_objective(y_true, y_pred):
+# def custom_objective(y_true, y_pred):
+#     y_pred_value = K.sum(y_true * y_pred, axis=-1)
+#     delta = K.maximum(0., y_pred - y_pred_value[:, None])
+#     twos = 2**delta
+#     mask = K.cast(K.greater(twos-1, 0), 'float32')
+#     sums = K.sum(twos*mask, axis=-1)
+#     return K.mean(sums)
+
+
+def custom_objective(y_true, y_pred, weight=1.):
     y_pred_value = K.sum(y_true * y_pred, axis=-1)
-    delta = K.maximum(0., y_pred - y_pred_value[:, None])
-    twos = 2**delta
-    mask = K.cast(K.greater(twos-1, 0), 'float32')
-    sums = K.sum(twos*mask, axis=-1)
-    return K.mean(sums)
+
+    s = K.softmax(y_pred, axis=-1)
+    delta = y_pred_value[:, None] - y_pred
+    sig_delta = K.sigmoid(delta)
+    mask = K.cast(K.equal(y_true, 0), 'float32')
+    product = s*sig_delta*mask
+    logs = -K.mean(K.log(K.sum(product, axis=-1)))
+    neg_mask = K.cast(K.equal(y_true, 1), 'float32')
+    # reg = K.mean(K.sum(s*y_pred**2*neg_mask, axis=-1))
+    reg = K.mean(K.sum(s*K.abs(y_pred)*neg_mask, axis=-1))
+
+    return logs + reg
 
 
 def iterate_minibatches(input_x, targets, batch_size, shuffle=True):
@@ -72,7 +88,7 @@ def nn_prep(df):
     # specify some columns that we do not want in training
     cf_cols = [i for i in df.columns if 'current_filters' in i]
     price_cols = [i for i in df.columns if re.match(r'prices_\d', i)]
-    drop_cols = cf_cols + price_cols + ['country', 'platform']
+    drop_cols = cf_cols + price_cols + ['country', 'platform', 'impressions_str']
     drop_cols = [col for col in df.columns if col in drop_cols]
     # drop col
     logger.info(f'Drop columns:\n {drop_cols}')
@@ -80,7 +96,8 @@ def nn_prep(df):
 
     # fill nans
     df['last_reference_relative_loc'] = df['last_reference_relative_loc'].fillna(-1)
-    df['imp_changed'] = df['imp_changed'].fillna(-1)
+    # TODO
+    # df['imp_changed'] = df['imp_changed'].fillna(-1)
     rank_cols = [i for i in df.columns if 'rank' in i]
     df[rank_cols] = df[rank_cols].fillna(-1)
     # fill all nan with zeros now
@@ -89,6 +106,10 @@ def nn_prep(df):
     # some transformation
     log_median(df, 'last_duration')
     log_median(df, 'session_duration')
+    distance_cols = [col for col in df.columns if 'prev' in col]
+    for col in tqdm(distance_cols):
+        log_median(df, col)
+
     price_bins_cols = [i for i in df.columns if 'bin' in i]
     df[price_bins_cols] = df[price_bins_cols]/5
 
@@ -163,12 +184,12 @@ def train(train_df, params, only_last=False, retrain=False):
             logger.info(f"Loading model from existing '{model_filename}'")
             model = load_model(model_filename)
         else:
-            model = build_model(input_dim=156)
+            model = build_model(input_dim=x_trn.shape[1])
             nparams = model.count_params()
             opt = optimizers.Adam(lr=params['learning_rate'])
             # model.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=['accuracy'])
-            model.compile(optimizer=opt, loss="categorical_crossentropy", metrics=['accuracy'])
-            # model.compile(optimizer=opt, loss=custom_objective, metrics=['categorical_crossentropy'])
+            # model.compile(optimizer=opt, loss="categorical_crossentropy", metrics=['accuracy'])
+            model.compile(optimizer=opt, loss=custom_objective, metrics=['accuracy'])
 
             logger.info((f'train len: {len(y_trn):,} | val len: {len(y_val):,} '
                          f'| number of parameters: {nparams:,} | train_len/nparams={len(y_trn) / nparams:.5f}'))
@@ -255,7 +276,7 @@ if __name__ == '__main__':
              'recompute_test': False}
 
     params = {'batch_size': 512,
-              'n_epochs': 500,
+              'n_epochs': 50,
               'early_stopping_patience': 100,
               'reduce_on_plateau_patience': 30,
               'learning_rate': 0.001,

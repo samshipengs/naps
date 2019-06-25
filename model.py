@@ -33,7 +33,8 @@ def build_ensemble(dense_act='relu'):
     dense = Dense(128, activation=dense_act)(input_layer)
     dense = BatchNormalization()(dense)
     # output_layer = Dense(25, activation='sigmoid')(dense)
-    output_layer = Dense(25, activation='softmax')(dense)
+    # output_layer = Dense(25, activation='softmax')(dense)
+    output_layer = Dense(25, activation='linear')(dense)
 
     model = Model(inputs=input_layer, outputs=output_layer)
     return model

@@ -174,7 +174,7 @@ def train(train_df, params, only_last=False, retrain=False):
     rest_cols = [i for i in train_df if (i not in price_cols + prev_cols + star_cols + rating_cols)
                  and i not in ['session_id', 'target']]
     logger.info(f'Multimodal: price, prev, star, rating columns and the rest:\n{rest_cols}')
-    
+
     batch_size = params['batch_size']
     n_epochs = params['n_epochs']
     # record classifiers and mrr each training
@@ -206,16 +206,16 @@ def train(train_df, params, only_last=False, retrain=False):
 
         train_gen = iterate_minibatches(x_trn[price_cols].values,
                                         x_trn[prev_cols].values,
-                                        x_trn[star_cols],
-                                        x_trn[rating_cols],
-                                        x_trn[rest_cols],
+                                        x_trn[star_cols].values,
+                                        x_trn[rating_cols].values,
+                                        x_trn[rest_cols].values,
                                         y_trn_binary, batch_size, shuffle=True)
 
         val_gen = iterate_minibatches(x_val[price_cols].values,
                                       x_val[prev_cols].values,
-                                      x_val[star_cols],
-                                      x_val[rating_cols],
-                                      x_val[rest_cols],
+                                      x_val[star_cols].values,
+                                      x_val[rating_cols].values,
+                                      x_val[rest_cols].values,
                                       y_val_binary, batch_size, shuffle=True)
 
         # =====================================================================================

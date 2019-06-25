@@ -74,7 +74,7 @@ def xgb_prep(df):
     # some transformation
     to_log_median_cols = ['last_duration', 'session_duration', 'session_size', 'n_imps',
                           'mean_price', 'median_price', 'std_price', 'n_cfs',
-                          'step']
+                          'step', 'step_no_gap']
     prev_cols = [i for i in df.columns if 'prev' in i]
     to_log_median_cols.extend(prev_cols)
 

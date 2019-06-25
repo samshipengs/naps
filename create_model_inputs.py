@@ -220,7 +220,12 @@ def compute_session_func(grp):
     df['last_reference'] = df['reference']  # .shift(1)
     # although, we only look at the last integer reference
     valid_reference = df['last_reference'].str.contains(r'^\d+$')
-    df.loc[~valid_reference, 'last_reference'] = np.nan
+    # just in case its nan (it happened in test)
+    nan_valid_reference = pd.isna(valid_reference)
+    logger.info(f'There are {nan_valid_reference.sum()} nan when filtering valid reference to create last reference feature')
+    valid_reference = valid_reference[~nan_valid_reference]
+    non_valid_reference = valid_reference[~valid_reference].index
+    df.loc[non_valid_reference, 'last_reference'] = np.nan
     df['last_reference'] = df['last_reference'].shift(1)
     df['last_reference'].fillna(method='ffill', inplace=True)
     df.loc[click_out_mask, 'last_reference_relative_loc'] = df.loc[click_out_mask].apply(find_relative_ref_loc, axis=1)

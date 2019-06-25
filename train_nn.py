@@ -5,6 +5,8 @@ import pprint
 import pandas as pd
 import numpy as np
 from datetime import datetime as dt
+from functools import partial
+
 from ast import literal_eval
 from tqdm import tqdm
 from sklearn.model_selection import KFold, ShuffleSplit
@@ -37,20 +39,32 @@ RS = 42
 #     return K.mean(sums)
 
 
-def custom_objective(y_true, y_pred, weight=1.):
+def bpr_max(y_true, y_pred, l2=True, weight=1.):
+    # get the predicted value for target
     y_pred_value = K.sum(y_true * y_pred, axis=-1)
-
-    s = K.softmax(y_pred, axis=-1)
+    # compute softmax
+    softmax = K.softmax(y_pred, axis=-1)
+    # compute the margin between predicted score and the rest
     delta = y_pred_value[:, None] - y_pred
+    # affply sigmoid over the difference
     sig_delta = K.sigmoid(delta)
-    mask = K.cast(K.equal(y_true, 0), 'float32')
-    product = s*sig_delta*mask
-    logs = -K.mean(K.log(K.sum(product, axis=-1)))
-    neg_mask = K.cast(K.equal(y_true, 1), 'float32')
-    # reg = K.mean(K.sum(s*y_pred**2*neg_mask, axis=-1))
-    reg = K.mean(K.sum(s*K.abs(y_pred)*neg_mask, axis=-1))
+    # get the mask of non-target (or negative targets)
+    negative_mask = K.cast(K.equal(y_true, 0), 'float32')
+    # positive_mask = K.cast(K.equal(y_true, 1), 'float32')
 
-    return logs + reg
+    # get the sum of product over negative targets (and then sum over batch)
+    sum_product = softmax * sig_delta * negative_mask
+    # apply negative log
+    neg_logs = -K.mean(K.log(K.sum(sum_product, axis=-1)))
+    # add regularizer which also pushes the negative scores down
+    if l2:
+        reg = K.mean(K.sum(softmax * y_pred**2 * negative_mask, axis=-1))
+    else:
+        reg = K.mean(K.sum(softmax * K.abs(y_pred) * negative_mask, axis=-1))
+    return neg_logs + weight * reg
+
+
+custom_objective = partial(bpr_max, l2=True, weight=1.)
 
 
 def iterate_minibatches(input_x, targets, batch_size, shuffle=True):

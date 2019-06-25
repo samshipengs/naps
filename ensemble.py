@@ -26,7 +26,7 @@ logger = get_logger('train_lgb')
 Filepath = get_data_path()
 RS = 42
 
-setup = {'nrows': 5000000,
+setup = {'nrows': 1000000,
          'recompute_train': False,
          'add_test': False,
          'only_last': False,
@@ -35,7 +35,7 @@ setup = {'nrows': 5000000,
 train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], padding_value=np.nan,
                                    add_test=setup['add_test'], recompute=setup['recompute_train'])
 
-n_fold = 1 # 5
+n_fold = 1  # 5
 test_fraction = 0.15
 unique_session_ids = train_inputs['session_id'].unique()
 ss = ShuffleSplit(n_splits=n_fold, test_size=test_fraction, random_state=RS)
@@ -66,20 +66,21 @@ for fold, (trn_ind, val_ind) in enumerate(ss.split(unique_session_ids)):
     # load train
     trn_lgb = get_pred('lgb', 'trn', fold)
     trn_cat = get_pred('cat', 'trn', fold)
-    trn_nn = get_pred('nn', 'trn', fold)
+    # trn_nn = get_pred('nn', 'trn', fold)
     # load val
     val_lgb = get_pred('lgb', 'val', fold)
     val_cat = get_pred('cat', 'val', fold)
-    val_nn = get_pred('nn', 'val', fold)
-    print('trn_lgb:', trn_lgb.shape, 'cat', trn_cat.shape, 'nn', trn_nn.shape)
-    x_trn = np.concatenate([trn_lgb, trn_cat, trn_nn], axis=1)
-    x_val = np.concatenate([val_lgb, val_cat, val_nn], axis=1)
+    # val_nn = get_pred('nn', 'val', fold)
+    print('trn_lgb:', trn_lgb.shape, 'cat', trn_cat.shape)#, 'nn', trn_nn.shape)
+    # x_trn = np.concatenate([trn_lgb, trn_cat, trn_nn], axis=1)
+    # x_val = np.concatenate([val_lgb, val_cat, val_nn], axis=1)
+    x_trn = np.concatenate([trn_lgb, trn_cat], axis=1)
+    x_val = np.concatenate([val_lgb, val_cat], axis=1)
     print('x_trn:', x_trn.shape)
     print(y_trn.shape)
 
     # train
-    # # clf = GaussianNB()
-    # # clf = LinearSVC(penalty='l2', random_state=0, tol=1e-5, probability=True)
+    # clf = GaussianNB()
     # clf = RandomForestClassifier(n_estimators=500, max_depth=6, random_state=0, n_jobs=-1)
     clf = LogisticRegression(multi_class='multinomial', solver='newton-cg')
     clf.fit(x_trn, y_trn)

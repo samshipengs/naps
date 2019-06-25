@@ -284,7 +284,7 @@ if __name__ == '__main__':
              'recompute_test': True}
 
     base_params = {'boosting': 'gbdt',  # gbdt, dart, goss
-                   'num_boost_round': 5000,
+                   'num_boost_round': 500,
                    'learning_rate': 0.02,
                    'early_stopping_rounds': 100,
                    'num_class': 25,

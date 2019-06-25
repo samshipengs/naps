@@ -87,16 +87,7 @@ def iterate_minibatches(input_x, targets, batch_size, shuffle=True):
             yield (input_batch, targets_batch)
 
 
-def log_median(df, col, overall=False, nan_mask=0):
-    # log((1+value)/(1+median))
-    # df[col] = np.log1p(df[col])
-    # df[col] = df[col]/np.median(df[col])
-    # if overall:
-    #     all_values = np.concatenate(df[col].values)
-    #     mask = np.concatenate(df[col] != nan_mask)
-    #     median = np.median(all_values[mask])
-    #     df[col] = np.log((1 + df[col]) / (1 + median))
-    # else:
+def log_median(df, col):
     df[col] = np.log((1+df[col])/(1+np.median(df[col])))
 
 
@@ -123,7 +114,7 @@ def nn_prep(df):
     # some transformation
     to_log_median_cols = ['last_duration', 'session_duration', 'session_size', 'n_imps',
                           'mean_price', 'median_price', 'std_price', 'n_cfs',
-                          'step']
+                          'step', 'step_no_gap']
     prev_cols = [i for i in df.columns if 'prev' in i]
     to_log_median_cols.extend(prev_cols)
 

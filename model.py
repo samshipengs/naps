@@ -31,24 +31,30 @@ def multimodal_model(price_dim, prev_dim, star_dim, rating_dim, rest_dim):
     price_input = Input(shape=(price_dim, ), name='price_input')
     price_dense = Dense(16, activation='relu')(price_input)
     price_dense = Dense(8, activation='relu')(price_dense)
+    price_dense = BatchNormalization()(price_dense)
 
     prev_input = Input(shape=(prev_dim, ), name='prev_input')
     prev_dense = Dense(32, activation='relu')(prev_input)
     prev_dense = Dense(16, activation='relu')(prev_dense)
+    prev_dense = BatchNormalization()(prev_dense)
 
     star_input = Input(shape=(star_dim, ), name='star_input')
     star_dense = Dense(16, activation='relu')(star_input)
     star_dense = Dense(8, activation='relu')(star_dense)
+    star_dense = BatchNormalization()(star_dense)
 
     rating_input = Input(shape=(rating_dim, ), name='rating_input')
     rating_dense = Dense(64, activation='relu')(rating_input)
     rating_dense = Dense(64, activation='relu')(rating_dense)
+    rating_dense = BatchNormalization()(rating_dense)
 
     rest_input = Input(shape=(rest_dim, ), name='rest_input')
     rest_dense = Dense(32, activation='relu')(rest_input)
+    rest_dense = BatchNormalization()(rest_dense)
 
     early_fusion = concatenate([price_input, prev_input, star_input, rating_input, rest_input])
     early_fusion = Dense(32, activation='relu')(early_fusion)
+    early_fusion = BatchNormalization()(early_fusion)
 
     late_fusion = concatenate([price_dense, prev_dense, star_dense, rating_dense, rest_dense, early_fusion])
     late_fusion = Dense(32, activation='relu')(late_fusion)

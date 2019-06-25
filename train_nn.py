@@ -127,7 +127,7 @@ def nn_prep(df):
     prev_cols = [i for i in df.columns if 'prev' in i]
     to_log_median_cols.extend(prev_cols)
 
-    logger.info(f'Performing log_median columns on:\n{to_log_median_cols}')
+    logger.info(f'Performing log_median columns on:\n{np.array(to_log_median_cols)}')
     logger.warning('THIS PROBABLY WILL MAKE VALIDATION PERFORMANCE LOOK BETTER THAT IT ACTUALLY IS!!!')
     for col in tqdm(to_log_median_cols):
         log_median(df, col)
@@ -317,8 +317,8 @@ if __name__ == '__main__':
     train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], recompute=setup['recompute_train'])
     # train the model
     models, mrrs = train(train_inputs, params=params, only_last=setup['only_last'], retrain=setup['retrain'])
-    train_mrr = np.mean([mrr[0] for mrr in mrrs])
-    val_mrr = np.mean([mrr[1] for mrr in mrrs])
+    mean_train_mrr = np.mean([mrr[0] for mrr in mrrs])
+    mean_val_mrr = np.mean([mrr[1] for mrr in mrrs])
     # get the test inputs
     test_inputs = create_model_inputs(mode='test', recompute=setup['recompute_test'])
     # a bit preprocessing
@@ -341,7 +341,7 @@ if __name__ == '__main__':
     for c, clf in enumerate(models):
         logger.info(f'Generating predictions from model {c}')
         test_pred = clf.predict_proba(test_inputs)
-        np.save(os.path.join(Filepath.sub_path, 'nn_test_0_pred.npy'), test_pred)
+        np.save(os.path.join(Filepath.sub_path, f'nn_test_{c}_pred.npy'), test_pred)
         test_predictions.append(test_pred)
 
     logger.info('Generating submission by averaging cv predictions')
@@ -361,7 +361,7 @@ if __name__ == '__main__':
     test_sub.rename(columns={'recommendations': 'item_recommendations'}, inplace=True)
     test_sub = test_sub[sub_columns]
     current_time = dt.now().strftime('%m-%d-%H-%M')
-    test_sub.to_csv(os.path.join(Filepath.sub_path, f'nn_sub_{current_time}_{train_mrr:.4f}_{val_mrr:.4f}.csv'),
+    test_sub.to_csv(os.path.join(Filepath.sub_path, f'nn_sub_{current_time}_{mean_train_mrr:.4f}_{mean_val_mrr:.4f}.csv'),
                     index=False)
     logger.info('Done all')
 

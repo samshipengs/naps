@@ -573,7 +573,7 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
             # get 5 bins
             prices_len = len(set(prices))
             n_bins = 1 if prices_len == 1 else 5  # use 5 bins
-            return list(pd.qcut(prices, n_bins, duplicates='drop').codes)
+            return list(pd.qcut(prices, n_bins, duplicates='drop').codes+1)  # +1 so the index code start from 1
 
         logger.info('Getting price bins')
         df['price_bin'] = df['prices'].apply(get_bins)

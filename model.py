@@ -19,8 +19,9 @@ def build_model(input_dim, dense_act='relu', kernel_initializer='glorot_uniform'
     dense = Dense(32, activation=dense_act, kernel_initializer=kernel_initializer)(dense)
     dense = BatchNormalization()(dense)
     # output_layer = Dense(25, activation='sigmoid')(dense)
-    output_layer = Dense(25, activation='softmax')(dense)
-
+    # output_layer = Dense(25, activation='softmax')(dense)
+    output_layer = Dense(25, activation='linear')(dense)
+    
     model = Model(inputs=input_layer, outputs=output_layer)
     return model
 

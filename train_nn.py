@@ -171,8 +171,10 @@ def train(train_df, params, only_last=False, retrain=False):
     prev_cols = [i for i in train_df if 'prev' in i]
     star_cols = [i for i in train_df if 'star' in i]
     rating_cols = [i for i in train_df if 'rating' in i]
-    rest_cols = [i for i in train_df if i not in price_cols + prev_cols + star_cols + rating_cols]
-
+    rest_cols = [i for i in train_df if (i not in price_cols + prev_cols + star_cols + rating_cols)
+                 and i not in ['session_id', 'target']]
+    logger.info(f'Multimodal: price, prev, star, rating columns and the rest:\n{rest_cols}')
+    
     batch_size = params['batch_size']
     n_epochs = params['n_epochs']
     # record classifiers and mrr each training

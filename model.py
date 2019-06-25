@@ -44,7 +44,7 @@ def multimodal_model(price_dim, prev_dim, star_dim, rating_dim, rest_dim):
     rating_dense = Dense(64, activation='relu')(rating_input)
     rating_dense = Dense(64, activation='relu')(rating_dense)
 
-    rest_input = Input(shape=(rest_dim, ), name='price_input')
+    rest_input = Input(shape=(rest_dim, ), name='rest_input')
     rest_dense = Dense(32, activation='relu')(rest_input)
 
     early_fusion = concatenate([price_input, prev_input, star_input, rating_input, rest_input])

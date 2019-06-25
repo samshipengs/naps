@@ -302,7 +302,7 @@ def lgb_tuning(xtrain, base_params, n_searches=200):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 1000000,
+    setup = {'nrows': 5000000,
              'tuning': False,
              'recompute_train': False,
              'add_test': False,

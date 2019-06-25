@@ -25,7 +25,7 @@ from utils import get_logger, get_data_path
 from plots import plot_hist, confusion_matrix
 
 
-logger = get_logger('train_model')
+logger = get_logger('train_nn')
 Filepath = get_data_path()
 RS = 42
 

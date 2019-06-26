@@ -277,7 +277,7 @@ def train(train_df, params, only_last=False, retrain=False):
                             'gamma': 0,
                             'max_depth': 5,
                             'subsample': 0.9,
-                            'colsample_bytree': 0.4,
+                            'colsample_bytree': 1.,
                             'alpha': 5,
                             'grow_policy': 'depthwise',  # depthwise, lossguide
                             'objective': 'multi:softprob',
@@ -329,7 +329,7 @@ if __name__ == '__main__':
              'recompute_test': False}
 
     params = {'batch_size': 512,
-              'n_epochs': 200,
+              'n_epochs': 250,
               'early_stopping_patience': 100,
               'reduce_on_plateau_patience': 30,
               'learning_rate': 0.001,

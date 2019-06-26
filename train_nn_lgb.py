@@ -48,6 +48,12 @@ def evalmetric(preds, dtrain):
     return 'mrr', 1 - np.mean(1 / (pred_label + 1))
 
 
+def lgb_mrr(y_preds, train_data):
+    y_true = train_data.get_label()
+    pred_label = np.where((np.argsort(y_preds.reshape(25, -1), axis=0)[::-1, :] == y_true).T)[1]
+    return 'mrr', np.mean(1 / (pred_label + 1)), True
+
+
 def bpr_max_loss(l2=True, weight=1.):
     def bpr_max(y_true, y_pred):
         # get the predicted value for target
@@ -275,45 +281,50 @@ def train(train_df, params, only_last=False, retrain=False):
 
             logger.info('Done training nn, now grabbing features from nn output to feed into lgb')
             x_trn_input = get_features_from_nn(model, x_trn)
+            x_val_input = get_features_from_nn(model, x_val)
+
             logger.info(f'Input x from nn output shape: {x_trn_input.shape}')
-            dtrain = xgb.DMatrix(x_trn_input, label=y_trn)
-            dval = xgb.DMatrix(get_features_from_nn(model, x_val), label=y_val)
+            # dtrain = xgb.DMatrix(x_trn_input, label=y_trn)
+            # dval = xgb.DMatrix(get_features_from_nn(model, x_val), label=y_val)
+            lgb_trn_data = lgb.Dataset(x_trn_input, label=y_trn, free_raw_data=False)
+            lgb_val_data = lgb.Dataset(x_val_input, label=y_val, free_raw_data=False)
+
             # train model
             logger.info('Starts training')
-            train_params = {'eta': 0.05,
-                            'gamma': 0,
-                            'max_depth': 5,
-                            'subsample': 0.9,
-                            'colsample_bytree': 1.,
-                            'alpha': 5,
-                            'grow_policy': 'depthwise',  # depthwise, lossguide
-                            'objective': 'multi:softprob',
-                            'num_class': 25,
-                            'nthread': 11,
-                            'silent': 0,
-                            }
-            booster = xgb.train(train_params,
-                                dtrain,
-                                num_boost_round=200,
-                                early_stopping_rounds=10,
-                                feval=evalmetric,
-                                evals=[(dtrain, 'train'), (dval, 'val')])
+            train_params = {'boosting': 'gbdt',  # gbdt, dart, goss
+                           'num_boost_round': 500,
+                           'learning_rate': 0.02,
+                           'early_stopping_rounds': 100,
+                           'num_class': 25,
+                           'objective': 'multiclass',
+                           'metric': ['multi_logloss'],
+                           'verbose': -1,
+                           'seed': 42
+                           }
+
+            booster = lgb.train(train_params,
+                                lgb_trn_data,
+                                valid_sets=[lgb_trn_data, lgb_val_data],
+                                valid_names=['train', 'val'],
+                                feval=lgb_mrr,
+                                # init_model=lgb.Booster(model_file=model_filename),
+                                verbose_eval=100)
 
         booster.save_model(model_filename)
 
         # make prediction
-        x_trn = train_df[trn_mask].reset_index(drop=True)
-        x_trn = x_trn.groupby('session_id').last().reset_index(drop=False)
-        y_trn = x_trn['target'].values
-        x_trn.drop(['session_id', 'target'], axis=1, inplace=True)
-        dtrain = xgb.DMatrix(x_trn, label=y_trn)
+        # x_trn = train_df[trn_mask].reset_index(drop=True)
+        # x_trn = x_trn.groupby('session_id').last().reset_index(drop=False)
+        # y_trn = x_trn['target'].values
+        # x_trn.drop(['session_id', 'target'], axis=1, inplace=True)
+        # dtrain = xgb.DMatrix(x_trn, label=y_trn)
 
-        trn_pred = booster.predict(dtrain)
+        trn_pred = booster.predict(x_trn_input)
 
         trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
         trn_mrr = np.mean(1 / (trn_pred_label + 1))
 
-        val_pred = booster.predict(dval)
+        val_pred = booster.predict(x_val_input)
         val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
         val_mrr = np.mean(1 / (val_pred_label + 1))
         logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')

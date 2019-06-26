@@ -129,7 +129,7 @@ def train(train_df, params, n_fold=5, test_fraction=0.15, only_last=False, featu
 
         remove_ones_cols = [c for c in x_trn.columns if 'prev' in c]
         remove_ones_cols += ['last_action_type', 'last_reference_relative_loc', 'last_duration', 'imp_changed',
-                             'fs', 'sort_order']
+                             'fs', 'sort_order', 'step', 'step_gap']
         remove_ones_cols += ['session_id', 'length', 'target']
         x_trn_ones.drop(remove_ones_cols, axis=1, inplace=True)
         x_val_ones.drop(remove_ones_cols, axis=1, inplace=True)

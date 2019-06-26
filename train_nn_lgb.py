@@ -213,60 +213,65 @@ def train(train_df, params, only_last=False, retrain=False):
             logger.info(f"Loading model from existing '{model_filename}'")
             model = load_model(model_filename)
         else:
-            model = build_model(input_dim=x_trn.shape[1])
-            nparams = model.count_params()
-            opt = optimizers.Adam(lr=params['learning_rate'])
-            # model.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=['accuracy'])
-            # model.compile(optimizer=opt, loss="categorical_crossentropy", metrics=['accuracy'])
-            model.compile(optimizer=opt, loss=custom_objective, metrics=['accuracy'])
+            # check if there is a trained model
+            if os.path.isfile(model_filename):
+                logger.info(f"Loading model from existing '{model_filename}'")
+                model = load_model(model_filename)
+            else:
+                model = build_model(input_dim=x_trn.shape[1])
+                nparams = model.count_params()
+                opt = optimizers.Adam(lr=params['learning_rate'])
+                # model.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=['accuracy'])
+                # model.compile(optimizer=opt, loss="categorical_crossentropy", metrics=['accuracy'])
+                model.compile(optimizer=opt, loss=custom_objective, metrics=['accuracy'])
 
-            logger.info((f'train len: {len(y_trn):,} | val len: {len(y_val):,} '
-                         f'| number of parameters: {nparams:,} | train_len/nparams={len(y_trn) / nparams:.5f}'))
-            logger.info(f'{model.summary()}')
-            plot_model(model, to_file='./models/model.png')
-            # add some callbacks
-            callbacks = [ModelCheckpoint(model_filename, monitor='val_loss', save_best_only=True, verbose=1)]
-            log_dir = Filepath.tf_logs
-            log_filename = ('{0}-batchsize{1}_epochs{2}_nparams_{3}'
-                            .format(dt.now().strftime('%m-%d-%H-%M'), batch_size, n_epochs, nparams))
-            # tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True, histogram_freq=20,
-            #                  write_grads=True)
-            tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True, write_grads=True)
-            callbacks.append(tb)
-            # lr
-            # lr = LRTensorBoard(log_dir)
-            # callbacks.append(lr)
-            # logging
-            # log = LoggingCallback(logger.info)
-            # callbacks.append(log)
-            if params['early_stop']:
-                # simple early stopping
-                es = EarlyStopping(monitor='val_loss', mode='min', patience=params['early_stopping_patience'],
-                                   verbose=1)
-                callbacks.append(es)
-            if params['reduce_on_plateau']:
-                # rp
-                rp = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=params['reduce_on_plateau_patience'],
+                logger.info((f'train len: {len(y_trn):,} | val len: {len(y_val):,} '
+                             f'| number of parameters: {nparams:,} | train_len/nparams={len(y_trn) / nparams:.5f}'))
+                logger.info(f'{model.summary()}')
+                plot_model(model, to_file='./models/model.png')
+                # add some callbacks
+                callbacks = [ModelCheckpoint(model_filename, monitor='val_loss', save_best_only=True, verbose=1)]
+                log_dir = Filepath.tf_logs
+                log_filename = ('{0}-batchsize{1}_epochs{2}_nparams_{3}'
+                                .format(dt.now().strftime('%m-%d-%H-%M'), batch_size, n_epochs, nparams))
+                # tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True, histogram_freq=20,
+                #                  write_grads=True)
+                tb = TensorBoard(log_dir=os.path.join(log_dir, log_filename), write_graph=True, write_grads=True)
+                callbacks.append(tb)
+                # lr
+                # lr = LRTensorBoard(log_dir)
+                # callbacks.append(lr)
+                # logging
+                # log = LoggingCallback(logger.info)
+                # callbacks.append(log)
+                if params['early_stop']:
+                    # simple early stopping
+                    es = EarlyStopping(monitor='val_loss', mode='min', patience=params['early_stopping_patience'],
                                        verbose=1)
-                callbacks.append(rp)
-            if params['use_cyc']:
-                # step_size = (2 - 8)x(training iterations in epoch)
-                step_size = 8 * (len(y_trn) // batch_size)
-                logger.info(f'Using cyclic learning rate with step_size: {step_size}')
-                # clr = CyclicLR(base_lr=params['min_lr'], max_lr=params['max_lr'], step_size=step_size)
-                clr = CyclicLR(base_lr=params['min_lr'], max_lr=params['max_lr'], step_size=step_size,
-                               mode='exp_range', gamma=0.99994)
-                callbacks.append(clr)
+                    callbacks.append(es)
+                if params['reduce_on_plateau']:
+                    # rp
+                    rp = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=params['reduce_on_plateau_patience'],
+                                           verbose=1)
+                    callbacks.append(rp)
+                if params['use_cyc']:
+                    # step_size = (2 - 8)x(training iterations in epoch)
+                    step_size = 8 * (len(y_trn) // batch_size)
+                    logger.info(f'Using cyclic learning rate with step_size: {step_size}')
+                    # clr = CyclicLR(base_lr=params['min_lr'], max_lr=params['max_lr'], step_size=step_size)
+                    clr = CyclicLR(base_lr=params['min_lr'], max_lr=params['max_lr'], step_size=step_size,
+                                   mode='exp_range', gamma=0.99994)
+                    callbacks.append(clr)
 
-            _ = model.fit_generator(train_gen,
-                                    steps_per_epoch=len(y_trn) // batch_size,
-                                    epochs=n_epochs,
-                                    verbose=1,
-                                    callbacks=callbacks,
-                                    # validation_data=([val_num, val_price, val_click], y_val),
-                                    # validation_data=(x_val.values, y_val),
-                                    validation_data=val_gen,
-                                    validation_steps=len(y_val) // batch_size)
+                _ = model.fit_generator(train_gen,
+                                        steps_per_epoch=len(y_trn) // batch_size,
+                                        epochs=n_epochs,
+                                        verbose=1,
+                                        callbacks=callbacks,
+                                        # validation_data=([val_num, val_price, val_click], y_val),
+                                        # validation_data=(x_val.values, y_val),
+                                        validation_data=val_gen,
+                                        validation_steps=len(y_val) // batch_size)
 
             logger.info('Done training nn, now grabbing features from nn output to feed into lgb')
             dtrain = xgb.DMatrix(get_features_from_nn(model, x_trn), label=y_trn)

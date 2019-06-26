@@ -274,7 +274,9 @@ def train(train_df, params, only_last=False, retrain=False):
                                         validation_steps=len(y_val) // batch_size)
 
             logger.info('Done training nn, now grabbing features from nn output to feed into lgb')
-            dtrain = xgb.DMatrix(get_features_from_nn(model, x_trn), label=y_trn)
+            x_trn_input = get_features_from_nn(model, x_trn)
+            logger.info(f'Input x from nn output shape: {x_trn_input.shape}')
+            dtrain = xgb.DMatrix(x_trn_input, label=y_trn)
             dval = xgb.DMatrix(get_features_from_nn(model, x_val), label=y_val)
             # train model
             logger.info('Starts training')

@@ -472,14 +472,14 @@ def create_model_inputs(mode, nrows=100000, padding_value=0, add_test=False, rec
         df['ratings'] = df['ratings'].apply(_rank_value)
         df['stars'] = df['stars'].apply(_rank_value)
 
-        # before padding we record the original impression impression str value
-        # not drop them for target encoding purposes
-        def ints2str(imps):
-            if type(imps) != list:
-                return np.nan
-            else:
-                return '|'.join([str(i) for i in imps])
-        df['impressions_str'] = df['impressions'].apply(ints2str)
+        # # before padding we record the original impression impression str value
+        # # not drop them for target encoding purposes
+        # def ints2str(imps):
+        #     if type(imps) != list:
+        #         return np.nan
+        #     else:
+        #         return '|'.join([str(i) for i in imps])
+        # df['impressions_str'] = df['impressions'].apply(ints2str)
 
         # padding
         df['n_imps'] = df['impressions'].str.len()

@@ -33,7 +33,7 @@ def cat_preprocess(df):
     cf_cols = [i for i in df.columns if 'current_filters' in i]
     price_cols = [i for i in df.columns if re.match(r'prices_\d', i)]
 
-    drop_cols = cf_cols + price_cols + ['country', 'platform', 'impressions_str']
+    drop_cols = cf_cols + price_cols + ['country', 'platform']
     drop_cols = [col for col in df.columns if col in drop_cols]
     # drop col
     logger.info(f'Preliminary Drop columns:\n {drop_cols}')

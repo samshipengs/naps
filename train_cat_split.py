@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime as dt
 from ast import literal_eval
-
+from tqdm import tqdm
 from sklearn.model_selection import KFold, ShuffleSplit
 import catboost as cat
 
@@ -71,7 +71,7 @@ def cat_preprocess(df):
     return df
 
 
-def train(train_df, only_last=False):
+def train(train_df, train_params, only_last=False, retrain=False):
     # path to where model is saved
     model_path = Filepath.model_path
 
@@ -148,6 +148,9 @@ def train(train_df, only_last=False):
 
         x_trn_more.drop(['session_id', 'length', 'target'], axis=1, inplace=True)
         x_val_more.drop(['session_id', 'length', 'target'], axis=1, inplace=True)
+        # x_trn_more.drop(remove_ones_cols, axis=1, inplace=True)
+        # x_val_more.drop(remove_ones_cols, axis=1, inplace=True)
+
 
         # get categorical index
         cat_ind_ones = [k for k, v in enumerate(x_trn_ones.columns) if v in CATEGORICAL_COLUMNS]
@@ -289,7 +292,7 @@ if __name__ == '__main__':
     train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], padding_value=np.nan,
                                        add_test=setup['add_test'], recompute=setup['recompute_train'])
     # train the model
-    models, mrrs = train(train_inputs, params=params, only_last=setup['only_last'], retrain=setup['retrain'])
+    models, mrrs = train(train_inputs, params, only_last=setup['only_last'], retrain=setup['retrain'])
     mean_train_mrr = np.mean([mrr[0] for mrr in mrrs])
     mean_val_mrr = np.mean([mrr[1] for mrr in mrrs])
     # get the test inputs

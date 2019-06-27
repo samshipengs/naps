@@ -173,7 +173,7 @@ def train(train_df, train_params, only_last=False, retrain=False):
 
 
 if __name__ == '__main__':
-    setup = {'nrows': 1000000,
+    setup = {'nrows': 5000000,
              'recompute_train': False,
              'add_test': False,
              'only_last': False,
@@ -184,18 +184,18 @@ if __name__ == '__main__':
     params = {'loss_function': 'MultiClass',
               'custom_metric': ['Accuracy'],
               'eval_metric': 'MultiClass',
-              'iterations': 200,
+              'iterations': 5000,
               'learning_rate': 0.03,
               'early_stopping_rounds': 100,
               # SymmetricTree, Depthwise, Lossguide (lossguide seems like not implemented)
               'grow_policy': 'SymmetricTree',
               'depth': 6,
               'bootstrap_type': 'Bayesian',  # Poisson, Bayesian, Bernoulli
-              # 'subsample': 0.8,
-              # 'bagging_temperature': 1,
-              # 'l2_leaf_reg': 10,
-              # 'random_strength': 10,
-              # 'border_count': 100,
+              # 'subsample': 1,
+              'bagging_temperature': 2,
+              'l2_leaf_reg': 2,
+              'random_strength': 2,
+              'border_count': 100,
               'task_type': device}
 
     if params['grow_policy'] == 'Lossguide':

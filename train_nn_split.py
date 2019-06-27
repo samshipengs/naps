@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime as dt
 from ast import literal_eval
+from tqdm import tqdm
 
 from sklearn.model_selection import KFold, ShuffleSplit
 from keras import backend as K
@@ -28,23 +29,34 @@ Filepath = get_data_path()
 RS = 42
 
 
-# def custom_objective(y_true, y_pred):
-#     pred_value = K.max(y_pred*y_true, axis=1)
-#     diff = K.reshape(pred_value, (512, 1)) - y_pred
-#     incorrect_pred_mask = diff < 0
-#     # select the one that is incorrectly predicted
-#     incorrects = tf.boolean_mask(-diff, incorrect_pred_mask)
-#     return K.sum(K.flatten(incorrects))
+def bpr_max(y_true, y_pred):
+    l2 = True
+    weight = 1.
+    # get the predicted value for target
+    y_pred_value = K.sum(y_true * y_pred, axis=-1)
+    # compute softmax
+    softmax = K.softmax(y_pred, axis=-1)
+    # compute the margin between predicted score and the rest
+    delta = y_pred_value[:, None] - y_pred
+    # affply sigmoid over the difference
+    sig_delta = K.sigmoid(delta)
+    # get the mask of non-target (or negative targets)
+    negative_mask = K.cast(K.equal(y_true, 0), 'float32')
+    # positive_mask = K.cast(K.equal(y_true, 1), 'float32')
 
-
-# def custom_objective(y_true, y_pred):
-#     pred_value = K.max(y_pred*y_true, axis=1)
-#     diff = K.max(y_pred, axis=1) - pred_value
-#     return K.sum(diff)
+    # get the sum of product over negative targets (and then sum over batch)
+    sum_product = softmax * sig_delta * negative_mask
+    # apply negative log
+    neg_logs = -K.mean(K.log(K.sum(sum_product, axis=-1)))
+    # add regularizer which also pushes the negative scores down
+    if l2:
+        reg = K.mean(K.sum(softmax * y_pred**2 * negative_mask, axis=-1))
+    else:
+        reg = K.mean(K.sum(softmax * K.abs(y_pred) * negative_mask, axis=-1))
+    return neg_logs + weight * reg
 
 
 def iterate_minibatches(input_x, targets, batch_size, shuffle=True):
-    # default we will shuffle
     indices = np.arange(len(targets))
     while True:
         if shuffle:
@@ -63,77 +75,104 @@ def iterate_minibatches(input_x, targets, batch_size, shuffle=True):
 
 
 def log_median(df, col):
-    df[col] = np.log1p(df[col])
-    df[col] = df[col]/np.median(df[col])
+    df[col] = np.log((1+df[col])/(1+np.median(df[col])))
 
 
 def nn_prep(df):
+    # specify some columns that we do not want in training
+    cf_cols = [i for i in df.columns if 'current_filters' in i]
+    # price_cols = [i for i in df.columns if re.match(r'prices_\d', i)]
+    bin_cols = [i for i in df.columns if 'bin' in i]
+
+    drop_cols = cf_cols + bin_cols + ['country', 'platform', 'impressions_str', 'fs', 'sort_order']
+    drop_cols = [col for col in df.columns if col in drop_cols]
+    # drop col
+    logger.info(f'Preliminary Drop columns:\n {drop_cols}')
+    df.drop(drop_cols, axis=1, inplace=True)
+
     # fill nans
-    df['last_reference_relative_loc'] = df['last_reference_relative_loc'].fillna(-1)
+    df['last_reference_relative_loc'] = df['last_reference_relative_loc'].fillna(0)
     df['imp_changed'] = df['imp_changed'].fillna(-1)
-    rank_cols = [i for i in df.columns if 'rank' in i]
-    df[rank_cols] = df[rank_cols].fillna(-1)
+    # rank_cols = [i for i in df.columns if 'rank' in i]
+    # df[rank_cols] = df[rank_cols].fillna(0)
+    # fill all nan with zeros now
     df.fillna(0, inplace=True)
 
     # some transformation
-    log_median(df, 'last_duration')
-    log_median(df, 'session_duration')
-    # ohe
-    # ohe_cols = ['last_action_type', 'fs', 'sort_order']
+    to_log_median_cols = ['last_duration', 'session_duration', 'session_size', 'n_imps',
+                          'mean_price', 'median_price', 'std_price', 'n_cfs',
+                          'step', 'step_no_gap']
+    prev_cols = [i for i in df.columns if 'prev' in i]
+    to_log_median_cols.extend(prev_cols)
+
+    logger.info(f'Performing log_median columns on:\n{np.array(to_log_median_cols)}')
+    logger.warning('THIS PROBABLY WILL MAKE VALIDATION PERFORMANCE LOOK BETTER THAT IT ACTUALLY IS!!!')
+    for col in tqdm(to_log_median_cols):
+        log_median(df, col)
+
+    # price_bins_cols = [i for i in df.columns if 'bin' in i]
+    # df[price_bins_cols] = df[price_bins_cols]/5
+
+    # specify columns for ohe-hot-encoding
     ohe_cols = ['last_action_type']
 
     for col in ohe_cols:
         logger.info(f'One hot: {col}')
         df[col] = df[col].astype(int)
-        # df = pd.get_dummies(df, prefix=[col], drop_first=True)
         n_unique = df[col].nunique()
         df[col] = df[col].apply(lambda v: np.eye(n_unique, dtype=int)[v][1:])
         expand(df, col)
 
+    logger.info(f'COLUMNS:\n{list(df.columns)}')
 
-def train(train_inputs, params, only_last=False, retrain=False):
+    filename = 'train_inputs_nn.snappy'
+    df.to_parquet(os.path.join(Filepath.cache_path, filename), index=False)
+    return df
+
+
+def train(train_df, train_params, only_last=False, retrain=False):
     # path to where model is saved
     model_path = Filepath.model_path
 
     # specify some columns that we do not want in training
-    cf_cols = [i for i in train_inputs.columns if 'current_filters' in i]
-    price_cols = [i for i in train_inputs.columns if re.match(r'prices_\d', i)]
+    cf_cols = [i for i in train_df.columns if 'current_filters' in i]
+    price_cols = [i for i in train_df.columns if re.match(r'prices_\d', i)]
     drop_cols = cf_cols + price_cols  # + ['country', 'platform']
     # drop cf col for now
-    train_inputs.drop(drop_cols, axis=1, inplace=True)
-    logger.debug(f'train columns: {train_inputs.columns}')
+    train_df.drop(drop_cols, axis=1, inplace=True)
+    logger.debug(f'train columns: {train_df.columns}')
 
     # add sizes info
-    train_inputs['length'] = train_inputs.groupby('session_id')['session_id'].transform('size')
+    train_df['length'] = train_df.groupby('session_id')['session_id'].transform('size')
 
-    # if only use the last row of train_inputs to train
+    # if only use the last row of train_df to train
     if only_last:
         logger.info('Training ONLY with last row')
-        train_inputs = train_inputs.groupby('session_id').last().reset_index(drop=False)
+        train_df = train_df.groupby('session_id').last().reset_index(drop=False)
 
-    # grab unique session ids and use this to split, so that train_inputs with same session_id do not spread to both
+    # grab unique session ids and use this to split, so that train_df with same session_id do not spread to both
     # train and valid
-    unique_session_ids = train_inputs['session_id'].unique()
+    unique_session_ids = train_df['session_id'].unique()
 
     kf = ShuffleSplit(n_splits=5, test_size=0.15, random_state=RS)
 
     # a bit preprocessing
-    nn_prep(train_inputs)
+    nn_prep(train_df)
 
-    batch_size = params['batch_size']
-    n_epochs = params['n_epochs']
+    batch_size = train_params['batch_size']
+    n_epochs = train_params['n_epochs']
     # record classifiers and mrr each training
-    clfs = []
-    mrrs = []
+    cv_clfs = []
+    cv_mrrs = []
     t_init = time.time()
     for fold, (trn_ind, val_ind) in enumerate(kf.split(unique_session_ids)):
         logger.info(f'Training fold {fold}: train len={len(trn_ind):,} | val len={len(val_ind):,}')
         # get session_id used for train
         trn_ids = unique_session_ids[trn_ind]
-        trn_mask = train_inputs['session_id'].isin(trn_ids)
+        trn_mask = train_df['session_id'].isin(trn_ids)
 
-        x_trn, x_val = (train_inputs[trn_mask].reset_index(drop=True),
-                        train_inputs[~trn_mask].reset_index(drop=True))
+        x_trn, x_val = (train_df[trn_mask].reset_index(drop=True),
+                        train_df[~trn_mask].reset_index(drop=True))
 
         # split the training into two models, first with only session_size=1 second with > 1
         trn_ones_mask = x_trn['length'] == 1
@@ -151,14 +190,15 @@ def train(train_inputs, params, only_last=False, retrain=False):
                                   x_val[~val_ones_mask].reset_index(drop=True))
 
         # for validation only last row is needed
-        x_val = x_val.groupby('session_id').last().reset_index(drop=False)
+        x_val_more = x_val_more.groupby('session_id').last().reset_index(drop=False)
 
         # get target
-        y_trn_ones, y_val_ones = x_trn_ones['target'].values, x_val_ones['target'].values
-        y_trn_more, y_val_more = x_trn_more['target'].values, x_val_more['target'].values
+        y_trn_ones, y_val_ones = to_categorical(x_trn_ones['target'].values), to_categorical(x_val_ones['target'].values)
+        y_trn_more, y_val_more = to_categorical(x_trn_more['target'].values), to_categorical(x_val_more['target'].values)
 
-        remove_ones_cols = [c for c in x_trn.columns if ('prev' in c) or ('last' in c)]
-        remove_ones_cols += ['imp_changed', 'fs', 'sort_order']
+        remove_ones_cols = [col for col in x_trn.columns if ('prev' in c) or ('last' in c)]
+        remove_ones_cols += ['last_action_type', 'last_reference_relative_loc', 'last_duration', 'imp_changed',
+                             'fs', 'sort_order']
         remove_ones_cols += ['session_id', 'length', 'target']
         x_trn_ones.drop(remove_ones_cols, axis=1, inplace=True)
         x_val_ones.drop(remove_ones_cols, axis=1, inplace=True)
@@ -179,8 +219,8 @@ def train(train_inputs, params, only_last=False, retrain=False):
 
         model_ones = build_model(input_dim=98)
         nparams_ones = model_ones.count_params()
-        # opt = optimizers.Adam(lr=params['learning_rate'])
-        opt = optimizers.Adagrad(lr=params['learning_rate'])
+        # opt = optimizers.Adam(lr=train_params['learning_rate'])
+        opt = optimizers.Adagrad(lr=train_params['learning_rate'])
         model_ones.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=['accuracy'])
 
         # logger.info((f'train len: {len(y_trn):,} | val len: {len(y_val):,} '
@@ -200,14 +240,14 @@ def train(train_inputs, params, only_last=False, retrain=False):
                                                 validation_data=val_gen_ones,
                                                 validation_steps=len(y_val_ones) // batch_size)
         # make prediction
-        x_trn = train_inputs[trn_mask].reset_index(drop=True)
+        x_trn = train_df[trn_mask].reset_index(drop=True)
         x_trn = x_trn.groupby('session_id').last().reset_index(drop=False)
         # train
         trn_ones_mask = x_trn['length'] == 1
         x_trn_ones, x_trn_more = (x_trn[trn_ones_mask].reset_index(drop=True),
                                   x_trn[~trn_ones_mask].reset_index(drop=True))
 
-        y_trn_ones, y_trn_more = x_trn_ones['target'].values, x_trn_more['target'].values
+        y_trn_ones, y_trn_more = to_categorical(x_trn_ones['target'].values), to_categorical(x_trn_more['target'].values)
         x_trn_ones.drop(remove_ones_cols, axis=1, inplace=True)
         x_trn_more.drop(['session_id', 'length', 'target'], axis=1, inplace=True)
         x_trn_pred_ones = model_ones.predict(x=x_trn_ones.values, batch_size=1024)
@@ -216,8 +256,9 @@ def train(train_inputs, params, only_last=False, retrain=False):
         model_more = build_model(input_dim=163)
         nparams_more = model_ones.count_params()
         # opt = optimizers.Adam(lr=params['learning_rate'])
-        opt = optimizers.Adagrad(lr=params['learning_rate'])
-        model_more.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=['accuracy'])
+        opt = optimizers.Adagrad(lr=train_params['learning_rate'])
+        # model_more.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=['accuracy'])
+        model_more.compile(optimizer=opt, loss=bpr_max, metrics=['accuracy'])
 
         # logger.info((f'train len: {len(y_trn):,} | val len: {len(y_val):,} '
         #              f'| number of parameters: {nparams:,} | train_len/nparams={len(y_trn) / nparams:.5f}'))
@@ -256,11 +297,11 @@ def train(train_inputs, params, only_last=False, retrain=False):
 
         np.save(os.path.join(model_path, 'lgb_val_0_pred.npy'), val_pred)
 
-        clfs.append(clf)
-        mrrs.append((trn_mrr, val_mrr))
+        # clfs.append(clf)
+        # mrrs.append((trn_mrr, val_mrr))
 
     logger.info(f'Total time took: {(time.time()-t_init)/60:.2f} mins')
-    return clfs, mrrs
+    return cv_clfs, cv_mrrs
 
 
 if __name__ == '__main__':

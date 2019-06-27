@@ -196,10 +196,11 @@ def train(train_df, train_params, only_last=False, retrain=False):
         y_trn_ones, y_val_ones = to_categorical(x_trn_ones['target'].values), to_categorical(x_val_ones['target'].values)
         y_trn_more, y_val_more = to_categorical(x_trn_more['target'].values), to_categorical(x_val_more['target'].values)
 
-        remove_ones_cols = [col for col in x_trn.columns if ('prev' in c) or ('last' in c)]
+        remove_ones_cols = [col for col in x_trn.columns if ('prev' in col) or ('last' in col)]
         remove_ones_cols += ['last_action_type', 'last_reference_relative_loc', 'last_duration', 'imp_changed',
                              'fs', 'sort_order']
         remove_ones_cols += ['session_id', 'length', 'target']
+        remove_ones_cols = [col for col in x_trn_ones.columns if col in remove_ones_cols]
         x_trn_ones.drop(remove_ones_cols, axis=1, inplace=True)
         x_val_ones.drop(remove_ones_cols, axis=1, inplace=True)
 
@@ -217,11 +218,13 @@ def train(train_df, train_params, only_last=False, retrain=False):
         model_one_filename = os.path.join(model_path, f'nn_one_cv{fold}.model')
         model_more_filename = os.path.join(model_path, f'nn_more_cv{fold}.model')
 
-        model_ones = build_model(input_dim=98)
+        model_ones = build_model(input_dim=66)
         nparams_ones = model_ones.count_params()
         # opt = optimizers.Adam(lr=train_params['learning_rate'])
         opt = optimizers.Adagrad(lr=train_params['learning_rate'])
-        model_ones.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=['accuracy'])
+        # model_ones.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=['accuracy'])
+        model_ones.compile(optimizer=opt, loss=bpr_max, metrics=['accuracy'])
+
 
         # logger.info((f'train len: {len(y_trn):,} | val len: {len(y_val):,} '
         #              f'| number of parameters: {nparams:,} | train_len/nparams={len(y_trn) / nparams:.5f}'))
@@ -253,7 +256,7 @@ def train(train_df, train_params, only_last=False, retrain=False):
         x_trn_pred_ones = model_ones.predict(x=x_trn_ones.values, batch_size=1024)
         x_val_pred_ones = model_ones.predict(x=x_val_ones.values, batch_size=1024)
 
-        model_more = build_model(input_dim=163)
+        model_more = build_model(input_dim=129)
         nparams_more = model_ones.count_params()
         # opt = optimizers.Adam(lr=params['learning_rate'])
         opt = optimizers.Adagrad(lr=train_params['learning_rate'])
@@ -330,7 +333,7 @@ if __name__ == '__main__':
     # first create training inputs
     train_inputs = create_model_inputs(mode='train', nrows=setup['nrows'], recompute=setup['recompute_train'])
     # train the model
-    models, mrrs = train(train_inputs, params=params, only_last=setup['only_last'], retrain=setup['retrain'])
+    models, mrrs = train(train_inputs, params, only_last=setup['only_last'], retrain=setup['retrain'])
     train_mrr = np.mean([mrr[0] for mrr in mrrs])
     val_mrr = np.mean([mrr[1] for mrr in mrrs])
     # get the test inputs

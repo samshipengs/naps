@@ -193,8 +193,11 @@ def train(train_df, train_params, only_last=False, retrain=False):
         x_val_more = x_val_more.groupby('session_id').last().reset_index(drop=False)
 
         # get target
-        y_trn_ones, y_val_ones = to_categorical(x_trn_ones['target'].values), to_categorical(x_val_ones['target'].values)
-        y_trn_more, y_val_more = to_categorical(x_trn_more['target'].values), to_categorical(x_val_more['target'].values)
+        y_trn_ones, y_val_ones = x_trn_ones['target'].values, x_val_ones['target'].values
+        y_trn_more, y_val_more = x_trn_more['target'].values, x_val_more['target'].values
+
+        y_trn_ones_bin, y_val_ones_bin = to_categorical(y_trn_ones), to_categorical(y_val_ones)
+        y_trn_more_bin, y_val_more_bin = to_categorical(y_trn_more), to_categorical(y_val_more)
 
         remove_ones_cols = [col for col in x_trn.columns if ('prev' in col) or ('last' in col)]
         remove_ones_cols += ['last_action_type', 'last_reference_relative_loc', 'last_duration', 'imp_changed',
@@ -208,10 +211,10 @@ def train(train_df, train_params, only_last=False, retrain=False):
         x_val_more.drop(['session_id', 'length', 'target'], axis=1, inplace=True)
 
         # data generator
-        train_gen_ones = iterate_minibatches(x_trn_ones.values, y_trn_ones, batch_size, shuffle=True)
-        val_gen_ones = iterate_minibatches(x_val_ones.values, y_val_ones, batch_size, shuffle=False)
-        train_gen_more = iterate_minibatches(x_trn_more.values, y_trn_more, batch_size, shuffle=True)
-        val_gen_more = iterate_minibatches(x_val_more.values, y_val_more, batch_size, shuffle=False)
+        train_gen_ones = iterate_minibatches(x_trn_ones.values, y_trn_ones_bin, batch_size, shuffle=True)
+        val_gen_ones = iterate_minibatches(x_val_ones.values, y_val_ones_bin, batch_size, shuffle=False)
+        train_gen_more = iterate_minibatches(x_trn_more.values, y_trn_more_bin, batch_size, shuffle=True)
+        val_gen_more = iterate_minibatches(x_val_more.values, y_val_more_bin, batch_size, shuffle=False)
 
         # =====================================================================================
         # create model
@@ -250,7 +253,7 @@ def train(train_df, train_params, only_last=False, retrain=False):
         x_trn_ones, x_trn_more = (x_trn[trn_ones_mask].reset_index(drop=True),
                                   x_trn[~trn_ones_mask].reset_index(drop=True))
 
-        y_trn_ones, y_trn_more = to_categorical(x_trn_ones['target'].values), to_categorical(x_trn_more['target'].values)
+        # y_trn_ones, y_trn_more = to_categorical(x_trn_ones['target'].values), to_categorical(x_trn_more['target'].values)
         x_trn_ones.drop(remove_ones_cols, axis=1, inplace=True)
         x_trn_more.drop(['session_id', 'length', 'target'], axis=1, inplace=True)
         x_trn_pred_ones = model_ones.predict(x=x_trn_ones.values, batch_size=1024)
@@ -284,7 +287,7 @@ def train(train_df, train_params, only_last=False, retrain=False):
 
         print(x_trn_ones.shape, x_trn_more.shape)
         trn_pred = np.concatenate((x_trn_pred_ones, x_trn_pred_more), axis=0)
-        y_trn = np.concatenate((x_trn_ones['target'].values, x_trn_more['target'].values), axis=0)
+        y_trn = np.concatenate((y_trn_ones, y_trn_more), axis=0)
         print(trn_pred.shape, y_trn.shape)
         trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
         print(trn_pred_label.shape)
@@ -293,7 +296,7 @@ def train(train_df, train_params, only_last=False, retrain=False):
         # np.save(os.path.join(model_path, 'cat_trn_0_pred.npy'), trn_pred)
 
         val_pred = np.concatenate((x_val_pred_ones, x_val_pred_more), axis=0)
-        y_val = np.concatenate((x_val_ones['target'].values, x_val_more['target'].values), axis=0)
+        y_val = np.concatenate((y_val_ones, y_val_more), axis=0)
         val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
         val_mrr = np.mean(1 / (val_pred_label + 1))
         logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')

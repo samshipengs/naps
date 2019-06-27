@@ -30,43 +30,31 @@ Filepath = get_data_path()
 RS = 42
 
 
-# def custom_objective(y_true, y_pred):
-#     y_pred_value = K.sum(y_true * y_pred, axis=-1)
-#     delta = K.maximum(0., y_pred - y_pred_value[:, None])
-#     twos = 2**delta
-#     mask = K.cast(K.greater(twos-1, 0), 'float32')
-#     sums = K.sum(twos*mask, axis=-1)
-#     return K.mean(sums)
+def bpr_max(y_true, y_pred):
+    l2 = True
+    weight = 1.
+    # get the predicted value for target
+    y_pred_value = K.sum(y_true * y_pred, axis=-1)
+    # compute softmax
+    softmax = K.softmax(y_pred, axis=-1)
+    # compute the margin between predicted score and the rest
+    delta = y_pred_value[:, None] - y_pred
+    # affply sigmoid over the difference
+    sig_delta = K.sigmoid(delta)
+    # get the mask of non-target (or negative targets)
+    negative_mask = K.cast(K.equal(y_true, 0), 'float32')
+    # positive_mask = K.cast(K.equal(y_true, 1), 'float32')
 
-
-def bpr_max_loss(l2=True, weight=1.):
-    def bpr_max(y_true, y_pred):
-        # get the predicted value for target
-        y_pred_value = K.sum(y_true * y_pred, axis=-1)
-        # compute softmax
-        softmax = K.softmax(y_pred, axis=-1)
-        # compute the margin between predicted score and the rest
-        delta = y_pred_value[:, None] - y_pred
-        # affply sigmoid over the difference
-        sig_delta = K.sigmoid(delta)
-        # get the mask of non-target (or negative targets)
-        negative_mask = K.cast(K.equal(y_true, 0), 'float32')
-        # positive_mask = K.cast(K.equal(y_true, 1), 'float32')
-
-        # get the sum of product over negative targets (and then sum over batch)
-        sum_product = softmax * sig_delta * negative_mask
-        # apply negative log
-        neg_logs = -K.mean(K.log(K.sum(sum_product, axis=-1)))
-        # add regularizer which also pushes the negative scores down
-        if l2:
-            reg = K.mean(K.sum(softmax * y_pred**2 * negative_mask, axis=-1))
-        else:
-            reg = K.mean(K.sum(softmax * K.abs(y_pred) * negative_mask, axis=-1))
-        return neg_logs + weight * reg
-    return bpr_max
-
-
-custom_objective = bpr_max_loss(l2=True, weight=1.)
+    # get the sum of product over negative targets (and then sum over batch)
+    sum_product = softmax * sig_delta * negative_mask
+    # apply negative log
+    neg_logs = -K.mean(K.log(K.sum(sum_product, axis=-1)))
+    # add regularizer which also pushes the negative scores down
+    if l2:
+        reg = K.mean(K.sum(softmax * y_pred**2 * negative_mask, axis=-1))
+    else:
+        reg = K.mean(K.sum(softmax * K.abs(y_pred) * negative_mask, axis=-1))
+    return neg_logs + weight * reg
 
 
 def iterate_minibatches(input_x, targets, batch_size, shuffle=True):

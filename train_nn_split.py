@@ -29,6 +29,12 @@ Filepath = get_data_path()
 RS = 42
 
 
+def compute_mrr(pred, y_true):
+    pred_label = np.where(np.argsort(pred)[:, ::-1] == y_true.reshape(-1, 1))[1]
+    mrr = np.mean(1 / (pred_label + 1))
+    return mrr
+
+
 def bpr_max(y_true, y_pred):
     l2 = True
     weight = 1.
@@ -237,7 +243,7 @@ def train(train_df, train_params, only_last=False, retrain=False):
 
         history_ones = model_ones.fit_generator(train_gen_ones,
                                                 steps_per_epoch=len(y_trn_ones) // batch_size,
-                                                epochs=n_epochs,
+                                                epochs=100,
                                                 verbose=1,
                                                 callbacks=callbacks,
                                                 validation_data=val_gen_ones,
@@ -274,7 +280,7 @@ def train(train_df, train_params, only_last=False, retrain=False):
 
         history_more = model_more.fit_generator(train_gen_more,
                                                 steps_per_epoch=len(y_trn_more) // batch_size,
-                                                epochs=n_epochs,
+                                                epochs=300,
                                                 verbose=1,
                                                 callbacks=callbacks,
                                                 validation_data=val_gen_more,
@@ -282,12 +288,9 @@ def train(train_df, train_params, only_last=False, retrain=False):
         x_trn_pred_more = model_more.predict(x=x_trn_more.values, batch_size=1024)
         x_val_pred_more = model_more.predict(x=x_val_more.values, batch_size=1024)
 
-        print(x_trn_ones.shape, x_trn_more.shape)
         trn_pred = np.concatenate((x_trn_pred_ones, x_trn_pred_more), axis=0)
         y_trn = np.concatenate((y_trn_ones, y_trn_more), axis=0)
-        print(trn_pred.shape, y_trn.shape)
         trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
-        print(trn_pred_label.shape)
         trn_mrr = np.mean(1 / (trn_pred_label + 1))
         # save prediction
         # np.save(os.path.join(model_path, 'cat_trn_0_pred.npy'), trn_pred)
@@ -297,6 +300,14 @@ def train(train_df, train_params, only_last=False, retrain=False):
         val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
         val_mrr = np.mean(1 / (val_pred_label + 1))
         logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')
+
+        trn_mrr_one = compute_mrr(x_trn_pred_ones, y_trn_ones)
+        val_mrr_one = compute_mrr(x_val_pred_ones, y_val_ones)
+        trn_mrr_more = compute_mrr(x_trn_pred_more, y_trn_more)
+        val_mrr_more = compute_mrr(x_val_pred_more, y_val_more)
+
+        print(f'One: trn: {trn_mrr_one:.4f} | val: {val_mrr_one}')
+        print(f'More: trn: {trn_mrr_more:.4f} | val: {val_mrr_more}')
 
         np.save(os.path.join(model_path, 'lgb_val_0_pred.npy'), val_pred)
 

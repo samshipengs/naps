@@ -30,54 +30,92 @@ def compute_mrr(pred, y_true):
     return mrr
 
 
-def train(train_inputs, params, only_last=False, retrain=False):
+def log_median(df, col):
+    df[col] = np.log((1+df[col])/(1+np.median(df[col])))
+
+
+def cat_preprocess(df):
+    # specify some columns that we do not want in training
+    cf_cols = [i for i in df.columns if 'current_filters' in i]
+    price_cols = [i for i in df.columns if re.match(r'prices_\d', i)]
+
+    drop_cols = cf_cols + price_cols + ['country', 'platform']
+    drop_cols = [col for col in df.columns if col in drop_cols]
+    # drop col
+    logger.info(f'Preliminary Drop columns:\n {drop_cols}')
+    df.drop(drop_cols, axis=1, inplace=True)
+
+    # fillna
+    prev_cols = [i for i in df.columns if 'prev' in i]
+    df.loc[:, prev_cols] = df.loc[:, prev_cols].fillna(0)
+
+    # some transformation
+    to_log_median_cols = ['last_duration', 'session_duration', 'session_size', 'n_imps',
+                          'mean_price', 'median_price', 'std_price', 'n_cfs',
+                          'step', 'step_no_gap']
+    prev_cols = [i for i in df.columns if 'prev' in i]
+    to_log_median_cols.extend(prev_cols)
+
+    logger.info(f'Performing log_median columns on:\n{np.array(to_log_median_cols)}')
+    logger.warning('THIS PROBABLY WILL MAKE VALIDATION PERFORMANCE LOOK BETTER THAT IT ACTUALLY IS!!!')
+    for col in tqdm(to_log_median_cols):
+        log_median(df, col)
+
+    # price_bins_cols = [i for i in df.columns if 'bin' in i]
+    # df[price_bins_cols] = df[price_bins_cols]/5
+
+    logger.info(f'COLUMNS:\n{list(df.columns)}')
+
+    filename = 'train_inputs_cat.snappy'
+    df.to_parquet(os.path.join(Filepath.cache_path, filename), index=False)
+    return df
+
+
+def train(train_df, only_last=False):
     # path to where model is saved
     model_path = Filepath.model_path
-
-    # specify some columns that we do not want in training
-    cf_cols = [i for i in train_inputs.columns if 'current_filters' in i]
-    price_cols = [i for i in train_inputs.columns if re.match(r'prices_\d', i)]
-    drop_cols = cf_cols + price_cols  # + ['country', 'platform']
-    # drop cf col for now
-    train_inputs.drop(drop_cols, axis=1, inplace=True)
-    # logger.info(f'train columns:\n{list(train_inputs.columns)}')
-
-    # add sizes info
-    # train_inputs['length'] = train_inputs.groupby('session_id')['session_id'].transform('size')
 
     # temp
     train_clean = pd.read_parquet('./cache/basic_preprocessed_train_5000000.snappy')
     length = train_clean.groupby('session_id')['session_id'].size()
-    train_inputs['length'] = train_inputs['session_id'].map(length)
+    train_df['length'] = train_df['session_id'].map(length)
     del train_clean
     gc.collect()
-    assert train_inputs.length.isna().sum() == 0
+    assert train_df['length'].isna().sum() == 0
 
-    # if only use the last row of train_inputs to train
+    # if only use the last row of train_df to train
     if only_last:
         logger.info('Training ONLY with last row')
-        train_inputs = train_inputs.groupby('session_id').last().reset_index(drop=False)
+        train_df = train_df.groupby('session_id').last().reset_index(drop=False)
 
-    # grab unique session ids and use this to split, so that train_inputs with same session_id do not spread to both
+    # a bit processing
+    cat_preprocess(train_df)
+
+    train_cols = train_df.columns
+    logger.info(f'Columns used for training: {train_cols.values}')
+    used_categorical_cols = train_cols[train_cols.isin(CATEGORICAL_COLUMNS)]
+    logger.info(f'Categorical columns in training: {used_categorical_cols.values}')
+
+    # grab unique session ids and use this to split, so that train_df with same session_id do not spread to both
     # train and valid
-    unique_session_ids = train_inputs['session_id'].unique()
+    unique_session_ids = train_df['session_id'].unique()
 
     # kf = KFold(n_splits=5, shuffle=True, random_state=RS)
     ss = ShuffleSplit(n_splits=5, test_size=0.15, random_state=RS)
 
     # record classifiers and mrr each training
-    clfs = []
-    mrrs = []
+    cv_clfs = []
+    cv_mrrs = []
     t_init = time.time()
     for fold, (trn_ind, val_ind) in enumerate(ss.split(unique_session_ids)):
         logger.info(f'Training fold {fold}: train ids len={len(trn_ind):,} | val ids len={len(val_ind):,}')
         # get session_id used for train
         trn_ids = unique_session_ids[trn_ind]
-        trn_mask = train_inputs['session_id'].isin(trn_ids)
+        trn_mask = train_df['session_id'].isin(trn_ids)
         logger.info(f'Training fold {fold}: train len={trn_mask.sum():,} | val len={(~trn_mask).sum():,}')
 
-        x_trn, x_val = (train_inputs[trn_mask].reset_index(drop=True),
-                        train_inputs[~trn_mask].reset_index(drop=True))
+        x_trn, x_val = (train_df[trn_mask].reset_index(drop=True),
+                        train_df[~trn_mask].reset_index(drop=True))
 
         # split the training into two models, first with only session_size=1 second with > 1
         trn_ones_mask = x_trn['length'] == 1
@@ -101,7 +139,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
         y_trn_ones, y_val_ones = x_trn_ones['target'].values, x_val_ones['target'].values
         y_trn_more, y_val_more = x_trn_more['target'].values, x_val_more['target'].values
 
-        remove_ones_cols = [c for c in x_trn.columns if 'prev' in c]
+        remove_ones_cols = [col for col in x_trn.columns if 'prev' in col]
         remove_ones_cols += ['last_action_type', 'last_reference_relative_loc', 'last_duration', 'imp_changed',
                              'fs', 'sort_order']
         remove_ones_cols += ['session_id', 'length', 'target']
@@ -130,11 +168,12 @@ def train(train_inputs, params, only_last=False, retrain=False):
                        'bootstrap_type': 'Bayesian',  # Poisson, Bayesian, Bernoulli
                        # 'subsample': 0.8,
                        # 'bagging_temperature': 1,
-                       'l2_leaf_reg': 10,
-                       'random_strength': 10,
+                       'l2_leaf_reg': 1,
+                       'random_strength': 1,
                        # 'border_count': 100,
                        'task_type': device}
 
+        # train first he ones
         clf_one = cat.CatBoostClassifier(**params_ones)
         clf_one.fit(x_trn_ones, y_trn_ones,
                     cat_features=cat_ind_ones,
@@ -154,8 +193,8 @@ def train(train_inputs, params, only_last=False, retrain=False):
                        'bootstrap_type': 'Bayesian',  # Poisson, Bayesian, Bernoulli
                        # 'subsample': 0.8,
                        # 'bagging_temperature': 1,
-                       'l2_leaf_reg': 5,
-                       'random_strength': 5,
+                       'l2_leaf_reg': 1,
+                       'random_strength': 1,
                        # 'border_count': 100,
                        'task_type': device}
 
@@ -167,7 +206,7 @@ def train(train_inputs, params, only_last=False, retrain=False):
                      plot=False)
 
         # make prediction
-        x_trn = train_inputs[trn_mask].reset_index(drop=True)
+        x_trn = train_df[trn_mask].reset_index(drop=True)
         x_trn = x_trn.groupby('session_id').last().reset_index(drop=False)
         # train
         trn_ones_mask = x_trn['length'] == 1
@@ -195,13 +234,13 @@ def train(train_inputs, params, only_last=False, retrain=False):
                     f'train mrr ones: {trn_mrr_ones:.4f} | val mrr ones: {val_mrr_ones:.4f}\n'
                     f'train mrr more: {trn_mrr_more:.4f} | val mrr more: {val_mrr_more:.4f}\n')
 
-        np.save(os.path.join(model_path, 'lgb_val_0_pred.npy'), val_pred)
+        np.save(os.path.join(model_path, f'lgb_val_{fold}_pred.npy'), val_pred)
 
-        clfs.append(clf)
-        mrrs.append((trn_mrr, val_mrr))
+        cv_clfs.append(clf)
+        cv_mrrs.append((trn_mrr, val_mrr))
 
     logger.info(f'Total time took: {(time.time()-t_init)/60:.2f} mins')
-    return clfs, mrrs
+    return cv_clfs, cv_mrrs
 
 
 if __name__ == '__main__':
@@ -251,8 +290,8 @@ if __name__ == '__main__':
                                        add_test=setup['add_test'], recompute=setup['recompute_train'])
     # train the model
     models, mrrs = train(train_inputs, params=params, only_last=setup['only_last'], retrain=setup['retrain'])
-    train_mrr = np.mean([mrr[0] for mrr in mrrs])
-    val_mrr = np.mean([mrr[1] for mrr in mrrs])
+    mean_train_mrr = np.mean([mrr[0] for mrr in mrrs])
+    mean_val_mrr = np.mean([mrr[1] for mrr in mrrs])
     # get the test inputs
     test_inputs = create_model_inputs(mode='test', padding_value=np.nan, recompute=setup['recompute_test'])
 
@@ -294,7 +333,7 @@ if __name__ == '__main__':
     test_sub.rename(columns={'recommendations': 'item_recommendations'}, inplace=True)
     test_sub = test_sub[sub_columns]
     current_time = dt.now().strftime('%m-%d-%H-%M')
-    test_sub.to_csv(os.path.join(Filepath.sub_path, f'cat_sub_{current_time}_{train_mrr:.4f}_{val_mrr:.4f}.csv'),
+    test_sub.to_csv(os.path.join(Filepath.sub_path, f'cat_sub_{current_time}_{mean_train_mrr:.4f}_{mean_val_mrr:.4f}.csv'),
                     index=False)
     logger.info('Done all')
 

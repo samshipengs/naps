@@ -228,9 +228,6 @@ def train(train_df, train_params, only_last=False, retrain=False):
         # model_ones.compile(optimizer=opt, loss="sparse_categorical_crossentropy", metrics=['accuracy'])
         model_ones.compile(optimizer=opt, loss=bpr_max, metrics=['accuracy'])
 
-
-        # logger.info((f'train len: {len(y_trn):,} | val len: {len(y_val):,} '
-        #              f'| number of parameters: {nparams:,} | train_len/nparams={len(y_trn) / nparams:.5f}'))
         callbacks = [ModelCheckpoint(model_one_filename, monitor='val_loss', save_best_only=True, verbose=1)]
         log_dir = Filepath.tf_logs
         log_filename = ('{0}-batchsize{1}_epochs{2}_nparams_{3}'
@@ -253,7 +250,7 @@ def train(train_df, train_params, only_last=False, retrain=False):
         x_trn_ones, x_trn_more = (x_trn[trn_ones_mask].reset_index(drop=True),
                                   x_trn[~trn_ones_mask].reset_index(drop=True))
 
-        # y_trn_ones, y_trn_more = to_categorical(x_trn_ones['target'].values), to_categorical(x_trn_more['target'].values)
+        y_trn_ones, y_trn_more = x_trn_ones['target'].values, x_trn_more['target'].values
         x_trn_ones.drop(remove_ones_cols, axis=1, inplace=True)
         x_trn_more.drop(['session_id', 'length', 'target'], axis=1, inplace=True)
         x_trn_pred_ones = model_ones.predict(x=x_trn_ones.values, batch_size=1024)

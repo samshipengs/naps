@@ -284,7 +284,7 @@ def train(train_df, train_params, only_last=False, retrain=False):
 
         print(x_trn_ones.shape, x_trn_more.shape)
         trn_pred = np.concatenate((x_trn_pred_ones, x_trn_pred_more), axis=0)
-        y_trn = np.concatenate((y_trn_ones, y_trn_more), axis=0)
+        y_trn = np.concatenate((x_trn_ones['target'].values, x_trn_more['target'].values), axis=0)
         print(trn_pred.shape, y_trn.shape)
         trn_pred_label = np.where(np.argsort(trn_pred)[:, ::-1] == y_trn.reshape(-1, 1))[1]
         print(trn_pred_label.shape)
@@ -293,7 +293,7 @@ def train(train_df, train_params, only_last=False, retrain=False):
         # np.save(os.path.join(model_path, 'cat_trn_0_pred.npy'), trn_pred)
 
         val_pred = np.concatenate((x_val_pred_ones, x_val_pred_more), axis=0)
-        y_val = np.concatenate((y_val_ones, y_val_more), axis=0)
+        y_val = np.concatenate((x_val_ones['target'].values, x_val_more['target'].values), axis=0)
         val_pred_label = np.where(np.argsort(val_pred)[:, ::-1] == y_val.reshape(-1, 1))[1]
         val_mrr = np.mean(1 / (val_pred_label + 1))
         logger.info(f'train mrr: {trn_mrr:.4f} | val mrr: {val_mrr:.4f}')
